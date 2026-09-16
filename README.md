@@ -25,9 +25,13 @@ Data lives in a Google Sheet, served through a small Apps Script Web App (`backe
 
 Send the Web app URL and admin token to whoever should be able to run the admin dashboard from their own computer — anyone with the link but without the admin key can only see the public colour page.
 
-## Loading a new window's data
+## Where the data comes from
 
-Once deployed, data is imported via one `bulkSeed` API call per window (games + team colours + palette) — ask Claude to prepare and send it, or POST it yourself with the shape found in `backend/Code.gs`'s `bulkSeed` function.
+The schedule, BOVM/GFX crew, venues and team colours are never typed in by hand — they're imported from the FIBA Excel files (production plan, BOVM/GFX sheets, uniform colours workbook). Whenever there's a new window or a revision to an existing one, send the updated Excel file(s) to Claude; it re-runs the same extraction/cross-referencing and imports it via one `bulkSeed` API call.
+
+Re-importing a window is safe: it refreshes schedule/crew/colour data from the new file, but **preserves** whatever backup-clock status, GFX-example status and notes you've already tracked in the app for existing games — that production-tracking data only ever lives in this sheet, never in the Excel files, so a re-import never erases it.
+
+The only things maintained directly in the app (not imported) are: the live status/notes on each game, and any manual colour tweaks made in the Team Colours tab.
 
 ## Files
 

@@ -239,18 +239,38 @@ function removeRowsWhere(ss, sheetName, predicate){
  * palette colours (never removes existing palette colours).
  * body: { token, window, windowLabel, games:[...], teams:[...], palette:[...] }
  */
+var LIVE_GAME_FIELDS = ['backupClockStatus','backupClockNote','gfxExampleStatus','gfxExampleNote','remarks'];
+
 function bulkSeed(body){
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheets(ss);
   var win = body.window;
   if(!win) return { error:'missing window id' };
 
+  // Re-importing a window (a corrected fixture list, a new operator, etc.)
+  // must not erase production tracking that only ever lives in this sheet
+  // (backup clock / GFX example status, notes) - carry it forward by game id.
+  var existingGames = readRows(ss,'Games').filter(function(r){ return r.window === win; });
+  var liveById = {};
+  existingGames.forEach(function(r){
+    var live = {};
+    LIVE_GAME_FIELDS.forEach(function(f){ live[f] = r[f]; });
+    liveById[r.id] = live;
+  });
+
   removeRowsWhere(ss,'Games', function(r){ return r.window === win; });
   removeRowsWhere(ss,'Teams', function(r){ return r.window === win; });
 
   var gamesSh = ss.getSheetByName('Games');
   var gameRows = (body.games || []).map(function(g){
-    return GAMES_HEADERS.map(function(h){ return g[h] !== undefined ? g[h] : ''; });
+    var merged = Object.assign({}, g);
+    var live = liveById[g.id];
+    if(live){
+      LIVE_GAME_FIELDS.forEach(function(f){
+        if(live[f] !== undefined && live[f] !== '') merged[f] = live[f];
+      });
+    }
+    return GAMES_HEADERS.map(function(h){ return merged[h] !== undefined ? merged[h] : ''; });
   });
   if(gameRows.length) gamesSh.getRange(gamesSh.getLastRow()+1, 1, gameRows.length, GAMES_HEADERS.length).setValues(gameRows);
 
