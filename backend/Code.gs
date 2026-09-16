@@ -258,6 +258,16 @@ function bulkSeed(body){
     liveById[r.id] = live;
   });
 
+  // Team colours are managed live in the Team Colours tab just as much as
+  // they're imported, so once a team has colours for this window a
+  // re-import must not silently undo an admin's correction: only brand-new
+  // team codes take their colours from the import. Must be captured before
+  // the rows below are deleted.
+  var existingTeamColors = {};
+  readRows(ss,'Teams').filter(function(r){ return r.window === win; }).forEach(function(r){
+    existingTeamColors[r.code] = { light: r.light, dark: r.dark, alternate: r.alternate };
+  });
+
   removeRowsWhere(ss,'Games', function(r){ return r.window === win; });
   removeRowsWhere(ss,'Teams', function(r){ return r.window === win; });
 
@@ -276,7 +286,14 @@ function bulkSeed(body){
 
   var teamsSh = ss.getSheetByName('Teams');
   var teamRows = (body.teams || []).map(function(t){
-    return TEAMS_HEADERS.map(function(h){ return t[h] !== undefined ? t[h] : ''; });
+    var merged = Object.assign({}, t);
+    var existing = existingTeamColors[t.code];
+    if(existing){
+      if(existing.light) merged.light = existing.light;
+      if(existing.dark) merged.dark = existing.dark;
+      if(existing.alternate) merged.alternate = existing.alternate;
+    }
+    return TEAMS_HEADERS.map(function(h){ return merged[h] !== undefined ? merged[h] : ''; });
   });
   if(teamRows.length) teamsSh.getRange(teamsSh.getLastRow()+1, 1, teamRows.length, TEAMS_HEADERS.length).setValues(teamRows);
 
