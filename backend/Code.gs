@@ -282,7 +282,15 @@ function bulkSeed(body){
     }
     return GAMES_HEADERS.map(function(h){ return merged[h] !== undefined ? merged[h] : ''; });
   });
-  if(gameRows.length) gamesSh.getRange(gamesSh.getLastRow()+1, 1, gameRows.length, GAMES_HEADERS.length).setValues(gameRows);
+  if(gameRows.length){
+    // Force plain-text format first: several columns look like dates or
+    // times (dateISO, gmtTime, espTime, localTime, ...) and Sheets will
+    // silently "helpfully" convert them to Date values otherwise, which
+    // corrupts them (wrong day, 1899 epoch times) once read back as JSON.
+    var gamesRange = gamesSh.getRange(gamesSh.getLastRow()+1, 1, gameRows.length, GAMES_HEADERS.length);
+    gamesRange.setNumberFormat('@');
+    gamesRange.setValues(gameRows);
+  }
 
   var teamsSh = ss.getSheetByName('Teams');
   var teamRows = (body.teams || []).map(function(t){
@@ -295,7 +303,11 @@ function bulkSeed(body){
     }
     return TEAMS_HEADERS.map(function(h){ return merged[h] !== undefined ? merged[h] : ''; });
   });
-  if(teamRows.length) teamsSh.getRange(teamsSh.getLastRow()+1, 1, teamRows.length, TEAMS_HEADERS.length).setValues(teamRows);
+  if(teamRows.length){
+    var teamsRange = teamsSh.getRange(teamsSh.getLastRow()+1, 1, teamRows.length, TEAMS_HEADERS.length);
+    teamsRange.setNumberFormat('@');
+    teamsRange.setValues(teamRows);
+  }
 
   var winRows = readRows(ss,'Windows');
   var winSh = ss.getSheetByName('Windows');
