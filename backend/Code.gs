@@ -9,7 +9,7 @@
  */
 
 var GAMES_HEADERS = ['window','id','dateISO','dateLabel','sortKey','home','homeName','away','awayName',
-  'venue','city','gmtTime','espTime','espNextDay','bovm','gfxOperator','gfxCompany','continent',
+  'venue','city','gmtTime','espTime','espNextDay','localTime','timeZone','bovm','gfxOperator','gfxCompany','continent',
   'homeColorHex','homeColorSlot','awayColorHex','awayColorSlot',
   'backupClockStatus','backupClockNote','gfxExampleStatus','gfxExampleNote','remarks','technicalPower'];
 var TEAMS_HEADERS = ['window','code','name','continent','light','dark','alternate'];
@@ -108,6 +108,7 @@ function gameRowToObj(r){
     home: r.home, homeName: r.homeName, away: r.away, awayName: r.awayName,
     venue: r.venue, city: r.city, gmtTime: r.gmtTime, espTime: r.espTime,
     espNextDay: (r.espNextDay === true || r.espNextDay === 'TRUE' || r.espNextDay === 'true'),
+    localTime: r.localTime, timeZone: r.timeZone,
     bovm: r.bovm, gfxOperator: r.gfxOperator, gfxCompany: r.gfxCompany, continent: r.continent,
     homeColor: { hex: r.homeColorHex, slot: r.homeColorSlot },
     awayColor: { hex: r.awayColorHex, slot: r.awayColorSlot },
