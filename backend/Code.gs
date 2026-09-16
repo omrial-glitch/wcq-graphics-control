@@ -40,7 +40,7 @@ function doPost(e){
   var body;
   try{ body = JSON.parse(e.postData.contents); }catch(err){ return jsonOut({ error:'bad json' }); }
   var action = body.action;
-  var writeActions = ['updateGame','updateTeamColor','addPaletteColor','removePaletteColor','bulkSeed'];
+  var writeActions = ['updateGame','updateTeamColor','addPaletteColor','removePaletteColor','bulkSeed','resetStatuses','addTeam','deleteTeam'];
   if(writeActions.indexOf(action) !== -1){
     var token = PropertiesService.getScriptProperties().getProperty('ADMIN_TOKEN');
     if(!token || body.token !== token) return jsonOut({ error:'unauthorized' });
@@ -51,6 +51,9 @@ function doPost(e){
     case 'addPaletteColor': return jsonOut(addPaletteColor(body));
     case 'removePaletteColor': return jsonOut(removePaletteColor(body));
     case 'bulkSeed': return jsonOut(bulkSeed(body));
+    case 'resetStatuses': return jsonOut(resetStatuses(body));
+    case 'addTeam': return jsonOut(addTeam(body));
+    case 'deleteTeam': return jsonOut(deleteTeam(body));
     default: return jsonOut({ error:'unknown action' });
   }
 }
@@ -328,4 +331,55 @@ function bulkSeed(body){
   });
 
   return { ok:true, gamesAdded: gameRows.length, teamsAdded: teamRows.length };
+}
+
+/** Clears backup-clock/GFX-example status+notes and remarks back to a
+ * blank slate for every game in a window (a deliberate "start fresh"
+ * action, not something a re-import triggers on its own). */
+function resetStatuses(body){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName('Games');
+  if(!sh) return { error:'no Games sheet' };
+  var win = body.window;
+  if(!win) return { error:'missing window id' };
+  var headers = sh.getDataRange().getValues()[0];
+  var rows = readRows(ss,'Games').filter(function(r){ return r.window === win; });
+  var cols = ['backupClockStatus','backupClockNote','gfxExampleStatus','gfxExampleNote','remarks'];
+  var blanks = ['pending','','pending','',''];
+  rows.forEach(function(r){
+    cols.forEach(function(c, i){
+      var idx = headers.indexOf(c);
+      if(idx >= 0) sh.getRange(r.__row, idx+1).setValue(blanks[i]);
+    });
+  });
+  return { ok:true, reset: rows.length };
+}
+
+function addTeam(body){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheets(ss);
+  var win = body.window, code = (body.code||'').trim().toUpperCase();
+  if(!win || !code || !body.name || !body.continent) return { error:'missing fields' };
+  var existing = readRows(ss,'Teams').filter(function(r){ return r.window === win; });
+  if(findRow(existing, function(r){ return r.code === code; })) return { error:'team already exists' };
+  var teamsSh = ss.getSheetByName('Teams');
+  var row = TEAMS_HEADERS.map(function(h){
+    if(h==='window') return win;
+    if(h==='code') return code;
+    if(h==='name') return body.name;
+    if(h==='continent') return body.continent;
+    return '';
+  });
+  var range = teamsSh.getRange(teamsSh.getLastRow()+1, 1, 1, TEAMS_HEADERS.length);
+  range.setNumberFormat('@');
+  range.setValues([row]);
+  return { ok:true };
+}
+
+function deleteTeam(body){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var win = body.window, code = (body.code||'').trim().toUpperCase();
+  if(!win || !code) return { error:'missing fields' };
+  removeRowsWhere(ss,'Teams', function(r){ return r.window === win && r.code === code; });
+  return { ok:true };
 }

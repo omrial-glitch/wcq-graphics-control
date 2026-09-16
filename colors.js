@@ -102,10 +102,10 @@ function teamCardHtml(t){
 function pairingRowHtml(g){
   return `
     <tr style="border-left:3px solid #${ZONE_HEX[g.continent]||'475569'}">
-      <td class="py-1.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateShort)}</td>
-      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.homeColor)}"></span>${esc(g.home)}</span></td>
-      <td class="py-1.5 px-3 text-center text-slate-600">–</td>
-      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.awayColor)}"></span>${esc(g.away)}</span></td>
+      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateShort)}</td>
+      <td class="py-2 px-3 text-right"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span><span class="w-5 h-5 rounded border border-white/15" style="background:${esc(g.homeColor)}"></span></span></td>
+      <td class="py-2 px-2 text-center text-slate-600 w-8">–</td>
+      <td class="py-2 px-3"><span class="inline-flex items-center gap-2"><span class="w-5 h-5 rounded border border-white/15" style="background:${esc(g.awayColor)}"></span><span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
     </tr>`;
 }
 

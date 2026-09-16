@@ -133,6 +133,19 @@ function startClock(){
 
 /* ---------------- init ---------------- */
 
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    const active = b.dataset.tab === name;
+    b.classList.toggle('text-blue-400', active);
+    b.classList.toggle('border-blue-500', active);
+    b.classList.toggle('text-slate-400', !active);
+    b.classList.toggle('border-transparent', !active);
+  });
+  document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
+  document.getElementById('panel-'+name).classList.remove('hidden');
+  state.tab = name;
+}
+
 function init(){
   const winSel = document.getElementById('windowSelect');
   WINDOWS.forEach(w=>{
@@ -144,18 +157,9 @@ function init(){
   winSel.addEventListener('change', () => { state.windowId = winSel.value; loadWindow(); });
 
   document.querySelectorAll('.tab-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      document.querySelectorAll('.tab-btn').forEach(b=>{
-        b.classList.remove('text-blue-400','border-blue-500');
-        b.classList.add('text-slate-400','border-transparent');
-      });
-      btn.classList.add('text-blue-400','border-blue-500');
-      btn.classList.remove('text-slate-400','border-transparent');
-      document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
-      document.getElementById('panel-'+btn.dataset.tab).classList.remove('hidden');
-      state.tab = btn.dataset.tab;
-    });
+    btn.addEventListener('click', ()=> switchTab(btn.dataset.tab));
   });
+  document.getElementById('backToScheduleBtn').addEventListener('click', ()=> switchTab('games'));
 
   document.getElementById('searchInput').addEventListener('input', (e)=>{
     state.search = e.target.value.trim().toLowerCase();
@@ -175,6 +179,24 @@ function init(){
     renderPalette();
     input.value = '';
     if(state.backendUrl) apiPost({ action: 'addPaletteColor', hex }).catch(e=>console.error(e));
+  });
+
+  document.getElementById('addTeamForm').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const codeInput = document.getElementById('newTeamCode');
+    const nameInput = document.getElementById('newTeamName');
+    const contSelect = document.getElementById('newTeamContinent');
+    const code = codeInput.value.trim().toUpperCase();
+    const name = nameInput.value.trim();
+    const continent = contSelect.value;
+    if(!code || !name){ if(!code) codeInput.classList.add('border-rose-500'); if(!name) nameInput.classList.add('border-rose-500'); return; }
+    if(state.teams[code]){ codeInput.classList.add('border-rose-500'); return; }
+    codeInput.classList.remove('border-rose-500'); nameInput.classList.remove('border-rose-500');
+    state.teams[code] = { code, name, continent, light: null, dark: null, alternate: null };
+    state.colorContinent = continent;
+    renderColorContinentTabs(); renderTeamColors(); renderPairing();
+    codeInput.value=''; nameInput.value='';
+    if(state.backendUrl) apiPost({ action:'addTeam', window: state.windowId, code, name, continent }).catch(e=>console.error(e));
   });
 
   wireSettingsModal();
@@ -284,10 +306,29 @@ function renderZoneChips(){
   });
 }
 
-function statusPill(state_, note){
-  if(state_==='ok') return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">✓ OK</span>`;
-  if(state_==='issue') return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30 max-w-[150px] truncate" title="${esc(note)}">⚠ ${note ? esc(note) : 'Issue'}</span>`;
-  return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-700/30 text-slate-400 border border-slate-600/30">○ Pending</span>`;
+function statusWidgetHtml(field, obj){
+  const status = obj.status || 'pending', note = obj.note || '';
+  const okActive = status === 'ok';
+  const wrapClass = status==='ok' ? 'border-emerald-500/40 bg-emerald-500/10' : (status==='issue' ? 'border-amber-500/40 bg-amber-500/10' : 'border-slate-700 bg-slate-800/30');
+  const textClass = status==='ok' ? 'text-emerald-100' : (status==='issue' ? 'text-amber-100' : 'text-slate-300');
+  const okClass = okActive ? 'bg-emerald-500/30 border-emerald-400 text-emerald-100' : 'bg-[#1a2234] border-[#2d3a54] text-slate-400';
+  return `
+    <div class="status-widget flex items-center gap-1.5 rounded-md border px-1.5 py-1 ${wrapClass}" data-field="${field}" data-ok="${okActive}">
+      <textarea rows="1" placeholder="No note" class="status-note flex-1 bg-transparent text-[11px] resize-none focus:outline-none min-w-[70px] ${textClass}">${esc(note)}</textarea>
+      <button type="button" class="ok-btn shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${okClass}">OK</button>
+    </div>`;
+}
+
+function restyleStatusWidget(widget, status){
+  const noteEl = widget.querySelector('.status-note');
+  const okBtn = widget.querySelector('.ok-btn');
+  widget.className = 'status-widget flex items-center gap-1.5 rounded-md border px-1.5 py-1 ' +
+    (status==='ok' ? 'border-emerald-500/40 bg-emerald-500/10' : status==='issue' ? 'border-amber-500/40 bg-amber-500/10' : 'border-slate-700 bg-slate-800/30');
+  noteEl.className = 'status-note flex-1 bg-transparent text-[11px] resize-none focus:outline-none min-w-[70px] ' +
+    (status==='ok' ? 'text-emerald-100' : status==='issue' ? 'text-amber-100' : 'text-slate-300');
+  okBtn.className = 'ok-btn shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ' +
+    (status==='ok' ? 'bg-emerald-500/30 border-emerald-400 text-emerald-100' : 'bg-[#1a2234] border-[#2d3a54] text-slate-400');
+  widget.dataset.ok = (status === 'ok') ? 'true' : 'false';
 }
 
 function renderGames(){
@@ -336,10 +377,10 @@ function renderGames(){
           <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-${cColor}-500/10 text-${cColor}-300 border border-${cColor}-500/30">${esc(g.gfxCompany)}</span>
         </div>
       </td>
-      <td class="px-3 py-1.5 text-center status-cell" data-field="backupClock">${statusPill(bk.status, bk.note)}</td>
-      <td class="px-3 py-1.5 text-center status-cell" data-field="gfxExample">${statusPill(gx.status, gx.note)}</td>
+      <td class="px-3 py-1.5">${statusWidgetHtml('backupClock', bk)}</td>
+      <td class="px-3 py-1.5">${statusWidgetHtml('gfxExample', gx)}</td>
       <td class="px-3 py-1.5">
-        <textarea rows="1" placeholder="General note…" class="w-full bg-[#0b0f19]/70 text-slate-300 text-xs px-2 py-1 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 resize-none">${esc(g.remarks)}</textarea>
+        <textarea rows="1" placeholder="General note…" class="remarks-note w-full bg-[#0b0f19]/70 text-slate-300 text-xs px-2 py-1 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 resize-none">${esc(g.remarks)}</textarea>
       </td>
     </tr>`;
   });
@@ -350,7 +391,7 @@ function renderGames(){
 function autosize(ta){ ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight)+'px'; }
 
 function wireGameRowEvents(tbody){
-  tbody.querySelectorAll('textarea').forEach(ta=>{
+  tbody.querySelectorAll('textarea.remarks-note').forEach(ta=>{
     autosize(ta);
     let timer;
     ta.addEventListener('input', ()=>{
@@ -361,64 +402,47 @@ function wireGameRowEvents(tbody){
     ta.addEventListener('blur', ()=>{ writeGameField(ta.closest('tr').dataset.id, 'remarks', ta.value); });
   });
 
-  tbody.querySelectorAll('.status-cell').forEach(cell=>{
-    cell.addEventListener('click', ()=> openStatusEditor(cell));
-  });
+  wireStatusWidgets(tbody);
 }
 
-function openStatusEditor(cell){
-  const existing = cell.querySelector('.status-editor');
-  if(existing){ existing.remove(); return; }
-  document.querySelectorAll('.status-editor').forEach(e=>e.remove());
+function wireStatusWidgets(tbody){
+  tbody.querySelectorAll('.status-widget').forEach(widget=>{
+    const ta = widget.querySelector('.status-note');
+    const okBtn = widget.querySelector('.ok-btn');
+    const row = widget.closest('tr');
+    const id = row.dataset.id;
+    const field = widget.dataset.field;
+    autosize(ta);
 
-  const row = cell.closest('tr');
-  const id = row.dataset.id;
-  const field = cell.dataset.field;
-  const game = state.games.find(g=>g.id===id);
-  const cur = (game && game[field]) || {status:'pending', note:''};
+    const currentStatus = () => widget.dataset.ok === 'true' ? 'ok' : (ta.value.trim() ? 'issue' : 'pending');
+    const persist = (status) => {
+      const g = state.games.find(x=>x.id===id);
+      if(g) g[field] = { status, note: ta.value };
+      renderKpiStrip();
+      if(state.backendUrl) apiPost({ action:'updateGame', window: state.windowId, id, field, value: { status, note: ta.value } }).catch(e=>console.error(e));
+    };
 
-  const editor = document.createElement('div');
-  editor.className = 'status-editor mt-1.5 bg-[#0b0f19] border border-[#2d3a54] rounded-lg p-2 flex flex-col gap-1.5 text-left min-w-[180px]';
-  const opt = (v, label, activeClasses) => `<button type="button" data-v="${v}" class="flex-1 border border-[#2d3a54] rounded px-1.5 py-1 text-[10px] font-semibold ${cur.status===v ? activeClasses : 'bg-[#1a2234] text-slate-400'}">${label}</button>`;
-  editor.innerHTML = `
-    <div class="flex gap-1">
-      ${opt('pending','Pending','bg-slate-700/40 text-slate-200')}
-      ${opt('ok','OK','bg-emerald-500/20 text-emerald-300')}
-      ${opt('issue','Issue','bg-amber-500/20 text-amber-300')}
-    </div>
-    <textarea rows="1" placeholder="Note (optional)" class="bg-[#111827] border border-[#2d3a54] rounded px-2 py-1 text-[11px] text-slate-200 resize-none">${esc(cur.note)}</textarea>
-    <div class="flex justify-end"><button type="button" class="close-btn text-[10px] text-slate-500 hover:text-slate-300 px-1">Close</button></div>
-  `;
-  cell.appendChild(editor);
-  const ta = editor.querySelector('textarea');
-  autosize(ta);
-
-  let localStatus = cur.status;
-  const commit = () => { writeGameField(id, field, { status: localStatus, note: ta.value }); };
-
-  editor.querySelectorAll('[data-v]').forEach(b=>{
-    b.addEventListener('click', (e)=>{
-      e.stopPropagation();
-      localStatus = b.dataset.v;
-      commit();
-      openStatusEditorRefresh(cell);
+    let timer;
+    ta.addEventListener('input', ()=>{
+      autosize(ta);
+      restyleStatusWidget(widget, currentStatus());
+      clearTimeout(timer);
+      timer = setTimeout(()=> persist(currentStatus()), 700);
+    });
+    ta.addEventListener('blur', ()=> persist(currentStatus()));
+    okBtn.addEventListener('click', ()=>{
+      const turningOn = widget.dataset.ok !== 'true';
+      widget.dataset.ok = turningOn ? 'true' : 'false';
+      const status = currentStatus();
+      restyleStatusWidget(widget, status);
+      persist(status);
     });
   });
-  let timer;
-  ta.addEventListener('click', e=>e.stopPropagation());
-  ta.addEventListener('input', ()=>{ autosize(ta); clearTimeout(timer); timer = setTimeout(commit, 700); });
-  ta.addEventListener('blur', commit);
-  editor.querySelector('.close-btn').addEventListener('click', (e)=>{ e.stopPropagation(); commit(); editor.remove(); });
-}
-function openStatusEditorRefresh(cell){
-  cell.querySelector('.status-editor').remove();
-  openStatusEditor(cell);
 }
 
 function writeGameField(id, field, value){
   const g = state.games.find(x=>x.id===id);
   if(g) g[field] = value;
-  if(field !== 'remarks'){ renderGames(); renderKpiStrip(); }
   if(!state.backendUrl) return;
   apiPost({ action: 'updateGame', window: state.windowId, id, field, value }).catch(e=>console.error(e));
 }
@@ -462,16 +486,26 @@ function slotRowHtml(teamCode, slot, label, hex){
   const rgb = hexToRgb(hex||'#000000');
   const rgbText = rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : '—';
   return `
-  <div class="flex items-center gap-2.5">
-    <div class="w-7 h-7 rounded-md border border-white/10 flex-shrink-0" style="background:${hex||'transparent'};${hex?'':'border-style:dashed'}"></div>
-    <div class="flex-1 min-w-0 flex flex-col gap-0.5">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">${label}</span>
-      <div class="flex items-center gap-2 flex-wrap">
-        <input class="bg-[#0b0f19] border border-[#2d3a54] rounded px-1.5 py-0.5 text-[11px] font-mono w-24 text-slate-200 focus:border-blue-500 focus:outline-none" value="${hex||''}" placeholder="#RRGGBB" data-team="${teamCode}" data-slot="${slot}">
-        <span class="font-mono text-[10px] text-slate-500">${rgbText}</span>
-        <button type="button" class="text-[10px] text-slate-500 hover:text-slate-300 border border-[#2d3a54] rounded px-1.5 py-0.5" data-copy="${hex||''}">Copy</button>
+  <div class="flex flex-col gap-1.5" data-slot-row="${teamCode}:${slot}">
+    <div class="flex items-center gap-2.5">
+      <button type="button" class="pick-swatch w-7 h-7 rounded-md border border-white/10 flex-shrink-0" style="background:${hex||'transparent'};${hex?'':'border-style:dashed'}" data-pick="${teamCode}:${slot}" title="Pick from palette"></button>
+      <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span class="text-[10px] uppercase tracking-wide text-slate-500">${label}</span>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input class="bg-[#0b0f19] border border-[#2d3a54] rounded px-1.5 py-0.5 text-[11px] font-mono w-24 text-slate-200 focus:border-blue-500 focus:outline-none" value="${hex||''}" placeholder="#RRGGBB" data-team="${teamCode}" data-slot="${slot}">
+          <span class="font-mono text-[10px] text-slate-500">${rgbText}</span>
+          <button type="button" class="text-[10px] text-slate-500 hover:text-slate-300 border border-[#2d3a54] rounded px-1.5 py-0.5" data-copy="${hex||''}">Copy</button>
+        </div>
       </div>
     </div>
+  </div>`;
+}
+
+function palettePickerHtml(teamCode, slot){
+  if(!state.palette.length) return `<div class="text-[10px] text-slate-500 py-1">No palette colours yet.</div>`;
+  return `
+  <div class="palette-picker flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg mt-1">
+    ${state.palette.map(hex=>`<button type="button" class="w-6 h-6 rounded border border-white/10" style="background:${hex}" data-pick-apply="${teamCode}:${slot}:${hex}" title="${hex}"></button>`).join('')}
   </div>`;
 }
 
@@ -491,7 +525,13 @@ function renderTeamColors(){
   }
   wrap.innerHTML = list.map(t=>`
     <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
-      <div class="flex justify-between items-baseline"><span class="font-semibold text-sm text-white">${esc(t.name)}</span><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
+      <div class="flex justify-between items-baseline">
+        <span class="font-semibold text-sm text-white">${esc(t.name)}</span>
+        <span class="flex items-center gap-2">
+          <span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span>
+          <button type="button" data-delete-team="${t.code}" class="text-slate-500 hover:text-rose-400 text-xs leading-none" title="Delete team">×</button>
+        </span>
+      </div>
       ${slotRowHtml(t.code,'light','Light',t.light)}
       ${slotRowHtml(t.code,'dark','Dark',t.dark)}
       ${t.alternate
@@ -515,6 +555,31 @@ function renderTeamColors(){
   wrap.querySelectorAll('[data-add-alt]').forEach(b=>{
     b.addEventListener('click', ()=>{ writeTeamField(b.dataset.addAlt, 'alternate', '#FFFFFF'); });
   });
+  wrap.querySelectorAll('[data-delete-team]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const code = b.dataset.deleteTeam;
+      if(!confirm(`Delete ${code} from Team Colours? This does not remove it from the schedule.`)) return;
+      delete state.teams[code];
+      renderColorContinentTabs(); renderTeamColors(); renderPairing();
+      if(state.backendUrl) apiPost({ action:'deleteTeam', window: state.windowId, code }).catch(e=>console.error(e));
+    });
+  });
+  wrap.querySelectorAll('[data-pick]').forEach(sw=>{
+    sw.addEventListener('click', ()=>{
+      const row = sw.closest('[data-slot-row]');
+      const existingPicker = row.querySelector('.palette-picker');
+      document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
+      if(existingPicker) return; // was open, click closed it
+      const [teamCode, slot] = sw.dataset.pick.split(':');
+      row.insertAdjacentHTML('beforeend', palettePickerHtml(teamCode, slot));
+      row.querySelectorAll('[data-pick-apply]').forEach(pb=>{
+        pb.addEventListener('click', ()=>{
+          const [tc, sl, hex] = pb.dataset.pickApply.split(':');
+          writeTeamField(tc, sl, hex);
+        });
+      });
+    });
+  });
 }
 
 function writeTeamField(code, slot, hex){
@@ -532,10 +597,10 @@ function renderPairing(){
   if(!list.length){ tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
   tbody.innerHTML = list.map(g=>`
     <tr>
-      <td class="py-1.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
-      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.homeColor.hex)}"></span>${esc(g.home)}</span></td>
-      <td class="py-1.5 px-3 text-center text-slate-600">–</td>
-      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.awayColor.hex)}"></span>${esc(g.away)}</span></td>
+      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
+      <td class="py-2 px-3 text-right"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span><span class="w-5 h-5 rounded border border-white/15" style="background:${esc(g.homeColor.hex)}"></span></span></td>
+      <td class="py-2 px-2 text-center text-slate-600 w-8">–</td>
+      <td class="py-2 px-3"><span class="inline-flex items-center gap-2"><span class="w-5 h-5 rounded border border-white/15" style="background:${esc(g.awayColor.hex)}"></span><span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
     </tr>
   `).join('');
 }
