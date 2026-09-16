@@ -13,7 +13,7 @@ const COMPANY_COLOR = {
 const POLL_MS = 45000;
 
 const state = {
-  windowId: 'w4', tab: 'games', zone: 'all', search: '',
+  windowId: 'w4', tab: 'games', zone: 'all', search: '', colorContinent: 'Africa',
   games: [], teams: {}, palette: [],
   backendUrl: localStorage.getItem('wcq_backend_url') || '',
   adminToken: localStorage.getItem('wcq_admin_token') || '',
@@ -211,9 +211,26 @@ function renderAll(){
   renderZoneChips();
   renderGames();
   renderPalette();
+  renderColorContinentTabs();
   renderTeamColors();
   renderPairing();
   renderFooter();
+}
+
+function renderColorContinentTabs(){
+  const wrap = document.getElementById('colorContinentTabs');
+  const counts = {};
+  Object.values(state.teams).forEach(t=>{ counts[t.continent] = (counts[t.continent]||0)+1; });
+  wrap.innerHTML = CONT_ORDER.map(c=>{
+    const active = state.colorContinent === c;
+    return `<button data-cc="${c}" class="px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${active ? 'text-blue-400 border-blue-500' : 'text-slate-400 border-transparent hover:text-slate-200'}">${CONT_LABEL[c]} <span class="text-slate-500 font-normal">(${counts[c]||0})</span></button>`;
+  }).join('');
+  wrap.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      state.colorContinent = b.dataset.cc;
+      renderColorContinentTabs(); renderTeamColors(); renderPairing();
+    });
+  });
 }
 
 /* ---------------- games tab ---------------- */
@@ -461,35 +478,27 @@ function slotRowHtml(teamCode, slot, label, hex){
 function renderTeamColors(){
   const wrap = document.getElementById('teamsByContinent');
   const teams = state.teams;
+  document.getElementById('colorsColTitle').textContent = `Team Colours — ${CONT_LABEL[state.colorContinent]}`;
+  document.getElementById('fixturesColTitle').textContent = `${CONT_LABEL[state.colorContinent]} Fixtures`;
   if(!Object.keys(teams).length){
     wrap.innerHTML = `<div class="text-slate-500 text-xs py-4">${state.backendUrl ? 'No team colours loaded for this window yet.' : 'Connect a backend via the gear icon to load data.'}</div>`;
     return;
   }
-  const byCont = {};
-  Object.values(teams).forEach(t=>{ (byCont[t.continent] = byCont[t.continent]||[]).push(t); });
-
-  wrap.innerHTML = CONT_ORDER.filter(c=>byCont[c]).map(c=>{
-    const list = byCont[c].sort((a,b)=>a.name.localeCompare(b.name));
-    const hex = ZONE_HEX[c];
-    const cards = list.map(t=>`
-      <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
-        <div class="flex justify-between items-baseline"><span class="font-semibold text-sm text-white">${esc(t.name)}</span><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
-        ${slotRowHtml(t.code,'light','Light',t.light)}
-        ${slotRowHtml(t.code,'dark','Dark',t.dark)}
-        ${t.alternate
-          ? slotRowHtml(t.code,'alternate','Alternate',t.alternate)
-          : `<button type="button" data-add-alt="${t.code}" class="text-[11px] text-slate-500 hover:text-slate-300 border border-dashed border-[#2d3a54] rounded px-2 py-1 self-start">+ Add alternate colour</button>`}
-      </div>
-    `).join('');
-    return `<div class="flex flex-col gap-2.5">
-      <div class="flex items-center gap-2">
-        <span class="w-2.5 h-2.5 rounded-full" style="background:#${hex}"></span>
-        <h3 class="text-sm font-bold text-white">${CONT_LABEL[c]}</h3>
-        <span class="text-[11px] text-slate-500">${list.length} teams</span>
-      </div>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2.5">${cards}</div>
-    </div>`;
-  }).join('');
+  const list = Object.values(teams).filter(t=>t.continent===state.colorContinent).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!list.length){
+    wrap.innerHTML = `<div class="text-slate-500 text-xs py-4">No teams for this confederation yet.</div>`;
+    return;
+  }
+  wrap.innerHTML = list.map(t=>`
+    <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
+      <div class="flex justify-between items-baseline"><span class="font-semibold text-sm text-white">${esc(t.name)}</span><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
+      ${slotRowHtml(t.code,'light','Light',t.light)}
+      ${slotRowHtml(t.code,'dark','Dark',t.dark)}
+      ${t.alternate
+        ? slotRowHtml(t.code,'alternate','Alternate',t.alternate)
+        : `<button type="button" data-add-alt="${t.code}" class="text-[11px] text-slate-500 hover:text-slate-300 border border-dashed border-[#2d3a54] rounded px-2 py-1 self-start">+ Add alternate colour</button>`}
+    </div>
+  `).join('');
 
   wrap.querySelectorAll('input[data-team]').forEach(inp=>{
     inp.addEventListener('change', ()=>{
@@ -519,8 +528,8 @@ function writeTeamField(code, slot, hex){
 
 function renderPairing(){
   const tbody = document.getElementById('pairingBody');
-  const list = state.games.slice().sort((a,b)=>a.sortKey-b.sortKey);
-  if(!list.length){ tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No data yet</td></tr>`; return; }
+  const list = state.games.filter(g=>g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
+  if(!list.length){ tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
   tbody.innerHTML = list.map(g=>`
     <tr>
       <td class="py-1.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>

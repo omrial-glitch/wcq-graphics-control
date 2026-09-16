@@ -15,6 +15,7 @@ let TEAMS = SEED_TEAMS;
 let PALETTE = SEED_PALETTE;
 let PAIRINGS = SEED_PAIRINGS;
 let search = "";
+let activeContinent = "Africa";
 
 function esc(s){
   if(s===undefined||s===null) return "";
@@ -88,34 +89,76 @@ function pairingMatches(g){
   return (g.home + ' ' + g.away).toLowerCase().includes(search);
 }
 
+function teamCardHtml(t){
+  return `
+    <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
+      <div class="flex justify-between items-baseline"><span class="font-semibold text-sm text-white">${esc(t.name)}</span><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
+      ${slotRow('Light', t.light)}
+      ${slotRow('Dark', t.dark)}
+      ${slotRow('Alternate', t.alternate)}
+    </div>`;
+}
+
+function pairingRowHtml(g){
+  return `
+    <tr style="border-left:3px solid #${ZONE_HEX[g.continent]||'475569'}">
+      <td class="py-1.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateShort)}</td>
+      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.homeColor)}"></span>${esc(g.home)}</span></td>
+      <td class="py-1.5 px-3 text-center text-slate-600">–</td>
+      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.awayColor)}"></span>${esc(g.away)}</span></td>
+    </tr>`;
+}
+
+function renderContinentTabs(){
+  const wrap = document.getElementById('continentTabs');
+  const counts = {};
+  Object.values(TEAMS).forEach(t=>{ counts[t.continent] = (counts[t.continent]||0)+1; });
+  wrap.innerHTML = CONT_ORDER.map(c=>{
+    const active = activeContinent === c;
+    return `<button data-cc="${c}" class="px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${active ? 'text-blue-400 border-blue-500' : 'text-slate-400 border-transparent hover:text-slate-200'}">${CONT_LABEL[c]} <span class="text-slate-500 font-normal">(${counts[c]||0})</span></button>`;
+  }).join('');
+  wrap.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{ activeContinent = b.dataset.cc; renderContinentTabs(); renderTeams(); renderPairing(); });
+  });
+}
+
 function renderTeams(){
   const wrap = document.getElementById('teamsByContinent');
-  const byCont = {};
-  Object.values(TEAMS).forEach(t=>{ if(teamMatches(t)) (byCont[t.continent]=byCont[t.continent]||[]).push(t); });
-  const contsWithData = CONT_ORDER.filter(c=>byCont[c] && byCont[c].length);
-  if(!contsWithData.length){
-    wrap.innerHTML = `<div class="text-slate-500 text-sm py-8 text-center">No teams match "${esc(search)}".</div>`;
-    return;
+  const tabs = document.getElementById('continentTabs');
+  const colTitle = document.getElementById('colorsColTitle');
+  const fixTitle = document.getElementById('fixturesColTitle');
+
+  if(search){
+    tabs.classList.add('hidden');
+    const byCont = {};
+    Object.values(TEAMS).forEach(t=>{ if(teamMatches(t)) (byCont[t.continent]=byCont[t.continent]||[]).push(t); });
+    const contsWithData = CONT_ORDER.filter(c=>byCont[c] && byCont[c].length);
+    colTitle.textContent = 'Team Colours';
+    fixTitle.textContent = 'Fixtures';
+    if(!contsWithData.length){
+      wrap.innerHTML = `<div class="text-slate-500 text-sm py-8 text-center">No teams match "${esc(search)}".</div>`;
+    } else {
+      wrap.innerHTML = contsWithData.map(c=>{
+        const list = byCont[c].sort((a,b)=>a.name.localeCompare(b.name));
+        const hex = ZONE_HEX[c];
+        return `<div class="flex flex-col gap-2.5">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full" style="background:#${hex}"></span>
+            <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wide">${CONT_LABEL[c]}</h4>
+          </div>
+          <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2.5">${list.map(teamCardHtml).join('')}</div>
+        </div>`;
+      }).join('');
+    }
+  } else {
+    tabs.classList.remove('hidden');
+    colTitle.textContent = `Team Colours — ${CONT_LABEL[activeContinent]}`;
+    fixTitle.textContent = `${CONT_LABEL[activeContinent]} Fixtures`;
+    const list = Object.values(TEAMS).filter(t=>t.continent===activeContinent).sort((a,b)=>a.name.localeCompare(b.name));
+    wrap.innerHTML = list.length
+      ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">${list.map(teamCardHtml).join('')}</div>`
+      : `<div class="text-slate-500 text-sm py-8 text-center">No teams for this confederation yet.</div>`;
   }
-  wrap.innerHTML = contsWithData.map(c=>{
-    const list = byCont[c].sort((a,b)=>a.name.localeCompare(b.name));
-    const hex = ZONE_HEX[c];
-    const cards = list.map(t=>`
-      <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
-        <div class="flex justify-between items-baseline"><span class="font-semibold text-sm text-white">${esc(t.name)}</span><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
-        ${slotRow('Light', t.light)}
-        ${slotRow('Dark', t.dark)}
-        ${slotRow('Alternate', t.alternate)}
-      </div>`).join('');
-    return `<div class="flex flex-col gap-2.5">
-      <div class="flex items-center gap-2">
-        <span class="w-2.5 h-2.5 rounded-full" style="background:#${hex}"></span>
-        <h3 class="text-sm font-bold text-white">${CONT_LABEL[c]}</h3>
-        <span class="text-[11px] text-slate-500">${list.length} teams</span>
-      </div>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2.5">${cards}</div>
-    </div>`;
-  }).join('');
   wrap.querySelectorAll('[data-copy]').forEach(b=>{
     b.addEventListener('click', ()=> copyText(b.dataset.copy, b));
   });
@@ -123,21 +166,17 @@ function renderTeams(){
 
 function renderPairing(){
   const tbody = document.getElementById('pairingBody');
-  const list = PAIRINGS.filter(pairingMatches);
+  const list = search
+    ? PAIRINGS.filter(pairingMatches)
+    : PAIRINGS.filter(g=>g.continent===activeContinent);
   if(!list.length){
-    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No fixtures match "${esc(search)}".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">${search ? `No fixtures match "${esc(search)}".` : 'No fixtures for this confederation yet.'}</td></tr>`;
     return;
   }
-  tbody.innerHTML = list.map(g=>`
-    <tr style="border-left:3px solid #${ZONE_HEX[g.continent]||'475569'}">
-      <td class="py-1.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateShort)}</td>
-      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.homeColor)}"></span>${esc(g.home)}</span></td>
-      <td class="py-1.5 px-3 text-center text-slate-600">–</td>
-      <td class="py-1.5 px-3"><span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.awayColor)}"></span>${esc(g.away)}</span></td>
-    </tr>`).join('');
+  tbody.innerHTML = list.map(pairingRowHtml).join('');
 }
 
-function renderAll(){ renderPalette(); renderTeams(); renderPairing(); }
+function renderAll(){ renderPalette(); renderContinentTabs(); renderTeams(); renderPairing(); }
 
 async function loadLive(){
   if(!BACKEND_URL || BACKEND_URL.indexOf('__') === 0) return;

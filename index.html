@@ -141,20 +141,25 @@
     <div id="paletteGrid" class="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2.5"></div>
   </div>
 
-  <div id="teamsByContinent" class="flex flex-col gap-6"></div>
+  <div class="flex items-center gap-1.5 border-b border-[#1f2937]" id="colorContinentTabs"></div>
 
-  <div class="flex flex-col gap-1 mt-2">
-    <h2 class="text-base font-bold text-white">Colour Pairing by Game</h2>
-    <p class="text-xs text-slate-400 max-w-2xl">Which colour each side wears for its specific fixture, sorted chronologically.</p>
-  </div>
-  <div class="border border-[#1f2937] rounded-lg overflow-hidden bg-[#111827]">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left border-collapse text-xs" id="pairingTable">
-        <thead class="bg-[#0f172a] text-[11px] uppercase tracking-wider font-semibold text-slate-400 border-b border-[#1f2937]">
-          <tr><th class="py-2 px-3">Date</th><th class="py-2 px-3">Home</th><th class="py-2 px-3 text-center w-10"></th><th class="py-2 px-3">Away</th></tr>
-        </thead>
-        <tbody id="pairingBody" class="divide-y divide-[#1b2434]"></tbody>
-      </table>
+  <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6" id="colorSplitView">
+    <div class="flex flex-col gap-3">
+      <h3 class="text-sm font-bold text-white" id="colorsColTitle">Team Colours</h3>
+      <div id="teamsByContinent" class="flex flex-col gap-2.5"></div>
+    </div>
+    <div class="flex flex-col gap-3">
+      <h3 class="text-sm font-bold text-white" id="fixturesColTitle">Fixtures</h3>
+      <div class="border border-[#1f2937] rounded-lg overflow-hidden bg-[#111827]">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs" id="pairingTable">
+            <thead class="bg-[#0f172a] text-[11px] uppercase tracking-wider font-semibold text-slate-400 border-b border-[#1f2937]">
+              <tr><th class="py-2 px-3">Date</th><th class="py-2 px-3">Home</th><th class="py-2 px-3 text-center w-10"></th><th class="py-2 px-3">Away</th></tr>
+            </thead>
+            <tbody id="pairingBody" class="divide-y divide-[#1b2434]"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 </main>
