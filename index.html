@@ -109,22 +109,24 @@
     <button id="importSeedBtn" type="button" class="hidden px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">Import Window 4 data</button>
   </div>
   <div id="gamesTableWrap" class="border border-[#1f2937] rounded-lg overflow-hidden bg-[#111827] shadow-2xl">
-    <table class="w-full text-left border-collapse">
-      <thead class="bg-[#0f172a] text-[11px] uppercase tracking-wider font-semibold text-slate-400 border-b border-[#1f2937]">
-        <tr>
-          <th class="py-2.5 px-3 w-16 text-center">Zone</th>
-          <th class="py-2.5 px-3 min-w-[230px]">Fixture &amp; Kit Colors</th>
-          <th class="py-2.5 px-3 min-w-[150px]">Venue / City</th>
-          <th class="py-2.5 px-3 min-w-[120px]">Kickoff</th>
-          <th class="py-2.5 px-3 min-w-[140px]">BOVM</th>
-          <th class="py-2.5 px-3 min-w-[160px]">GFX Eng &amp; House</th>
-          <th class="py-2.5 px-3 min-w-[190px]">Backup Clock Cam</th>
-          <th class="py-2.5 px-3 min-w-[190px]">GFX Example</th>
-          <th class="py-2.5 px-3 min-w-[200px]">Notes</th>
-        </tr>
-      </thead>
-      <tbody id="gamesBody" class="divide-y divide-[#1b2434] text-xs"></tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead class="bg-[#0f172a] text-[11px] uppercase tracking-wider font-semibold text-slate-400 border-b border-[#1f2937]">
+          <tr>
+            <th class="py-2.5 px-3 w-16 text-center">Zone</th>
+            <th class="py-2.5 px-3 min-w-[230px]">Fixture &amp; Kit Colors</th>
+            <th class="py-2.5 px-3 min-w-[150px]">Venue / City</th>
+            <th class="py-2.5 px-3 min-w-[120px]">Kickoff</th>
+            <th class="py-2.5 px-3 min-w-[140px]">BOVM</th>
+            <th class="py-2.5 px-3 min-w-[160px]">GFX Eng &amp; House</th>
+            <th class="py-2.5 px-3 min-w-[190px]">Backup Clock Cam</th>
+            <th class="py-2.5 px-3 min-w-[190px]">GFX Example</th>
+            <th class="py-2.5 px-3 min-w-[200px]">Notes</th>
+          </tr>
+        </thead>
+        <tbody id="gamesBody" class="divide-y divide-[#1b2434] text-xs"></tbody>
+      </table>
+    </div>
   </div>
 </main>
 

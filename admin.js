@@ -404,6 +404,12 @@ function restyleStatusWidget(widget, status){
 
 function renderGames(){
   const tbody = document.getElementById('gamesBody');
+  // Firestore's realtime listener re-fires on every write, including our
+  // own (both the instant local echo and the server-confirmed one) -- a
+  // full table rebuild right then would yank focus out from under
+  // whatever the user is typing. Skip the rebuild while a cell in this
+  // table is focused; it'll catch up the moment they click away.
+  if(tbody.contains(document.activeElement)) return;
   const banner = document.getElementById('emptyWindowBanner');
   const tableWrap = document.getElementById('gamesTableWrap');
   const list = filteredGames();
@@ -497,7 +503,10 @@ function wireGameRowEvents(tbody){
       clearTimeout(timer);
       timer = setTimeout(()=>{ writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value); }, 700);
     });
-    inp.addEventListener('blur', ()=>{ writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value); });
+    inp.addEventListener('blur', ()=>{
+      writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value);
+      setTimeout(renderGames, 50); // catch up on anything missed while this field had focus
+    });
   });
 
   wireStatusWidgets(tbody);
@@ -528,7 +537,7 @@ function wireStatusWidgets(tbody){
       clearTimeout(timer);
       timer = setTimeout(()=> persist(currentStatus()), 700);
     });
-    ta.addEventListener('blur', ()=> persist(currentStatus()));
+    ta.addEventListener('blur', ()=>{ persist(currentStatus()); setTimeout(renderGames, 50); });
     okBtn.addEventListener('click', ()=>{
       const turningOn = widget.dataset.ok !== 'true';
       widget.dataset.ok = turningOn ? 'true' : 'false';
@@ -613,6 +622,7 @@ function palettePickerHtml(teamCode, slot){
 
 function renderTeamColors(){
   const wrap = document.getElementById('teamsByContinent');
+  if(wrap.contains(document.activeElement)) return; // don't yank focus while editing a hex field
   const teams = state.teams;
   document.getElementById('colorsColTitle').textContent = `Team Colours — ${CONT_LABEL[state.colorContinent]}`;
   document.getElementById('fixturesColTitle').textContent = `${CONT_LABEL[state.colorContinent]} Fixtures`;
@@ -695,12 +705,26 @@ function writeTeamField(code, slot, hex){
 
 /* ---------------- pairing table ---------------- */
 
+function teamColorPickerHtml(gameId, side, teamCode){
+  const t = state.teams[teamCode];
+  const options = t ? [['light','Light',t.light], ['dark','Dark',t.dark], ['alternate','Alternate',t.alternate]].filter(o=>o[2]) : [];
+  if(!options.length) return `<div class="text-[10px] text-slate-500 py-1 px-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg mt-1">${teamCode} has no colours defined yet — set them in the Team Colours cards above.</div>`;
+  return `
+  <div class="palette-picker flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg mt-1">
+    ${options.map(([slot,label,hex])=>`
+      <button type="button" class="flex items-center gap-1.5 px-2 py-1 rounded border border-white/10 bg-[#111827] hover:bg-[#1a2234]" data-pick-apply="${gameId}:${side}:${hex}" title="${hex}">
+        <span class="w-4 h-4 rounded border border-white/15" style="background:${hex}"></span>
+        <span class="text-[10px] text-slate-300">${label}</span>
+      </button>`).join('')}
+  </div>`;
+}
+
 function renderPairing(){
   const tbody = document.getElementById('pairingBody');
   const list = state.games.filter(g=>g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
   if(!list.length){ tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
   const swatchBtn = (gameId, side, code, hex) =>
-    `<button type="button" class="pick-swatch w-5 h-5 rounded border border-white/15" style="background:${esc(hex)}" data-pick-game="${gameId}:${side}" title="Set ${esc(code)}'s colour for this game only"></button>`;
+    `<button type="button" class="pick-swatch w-5 h-5 rounded border border-white/15" style="background:${esc(hex)}" data-pick-game="${gameId}:${side}:${code}" title="Set ${esc(code)}'s colour for this game only"></button>`;
   tbody.innerHTML = list.map(g=>`
     <tr data-fixture-row="${g.id}">
       <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
@@ -717,8 +741,8 @@ function renderPairing(){
       const wasOpenHere = row.dataset.pickerOpen === 'true';
       tbody.querySelectorAll('[data-game-slot]').forEach(r=>r.dataset.pickerOpen='false');
       if(wasOpenHere) return;
-      const [gameId, side] = sw.dataset.pickGame.split(':');
-      row.insertAdjacentHTML('beforeend', palettePickerHtml(gameId, side));
+      const [gameId, side, teamCode] = sw.dataset.pickGame.split(':');
+      row.insertAdjacentHTML('beforeend', teamColorPickerHtml(gameId, side, teamCode));
       row.dataset.pickerOpen = 'true';
       row.querySelectorAll('[data-pick-apply]').forEach(pb=>{
         pb.addEventListener('click', ()=>{
