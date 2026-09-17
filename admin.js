@@ -17,7 +17,7 @@ const state = {
   games: [], teams: {}, palette: [],
   backendUrl: localStorage.getItem('wcq_backend_url') || '',
   adminToken: localStorage.getItem('wcq_admin_token') || '',
-  lastSync: null, pollTimer: null,
+  lastSync: null, pollTimer: null, syncFailures: 0,
 };
 
 function esc(s){
@@ -57,11 +57,53 @@ function apiGet(params){
   Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,v));
   return fetch(url.toString()).then(r=>r.json());
 }
-function apiPost(payload){
+function apiPostOnce(payload){
   return fetch(state.backendUrl, {
     method: 'POST',
     body: JSON.stringify(Object.assign({ token: state.adminToken }, payload)),
   }).then(r=>r.json());
+}
+// Every write gets 2 retries with backoff before it's reported as failed —
+// a save should never silently vanish just because Apps Script had a slow
+// or transient blip.
+function apiPost(payload, attempt){
+  attempt = attempt || 1;
+  return apiPostOnce(payload).then(res=>{
+    if(res && res.error){ throw new Error(res.error); }
+    return res;
+  }).catch(err=>{
+    if(attempt < 3){
+      return new Promise(resolve=>setTimeout(resolve, attempt * 1000))
+        .then(()=> apiPost(payload, attempt + 1));
+    }
+    showToast('Save failed — check your connection and try again.', 'error');
+    throw err;
+  });
+}
+
+function showToast(msg, kind){
+  const stack = document.getElementById('toastStack');
+  const el = document.createElement('div');
+  const styles = {
+    ok: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200',
+    error: 'bg-rose-500/15 border-rose-500/40 text-rose-200',
+    info: 'bg-slate-700/40 border-slate-600/40 text-slate-200',
+  };
+  el.className = `px-3 py-2 rounded-lg border text-xs font-medium shadow-lg max-w-[280px] ${styles[kind] || styles.info}`;
+  el.textContent = msg;
+  stack.appendChild(el);
+  setTimeout(()=>{ el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(()=>el.remove(), 300); }, 4000);
+}
+
+function cacheKey(winId){ return 'wcq_cache_' + winId; }
+function saveCache(winId, data){
+  try{ localStorage.setItem(cacheKey(winId), JSON.stringify({ ...data, ts: Date.now() })); }catch(e){}
+}
+function loadCache(winId){
+  try{
+    const raw = localStorage.getItem(cacheKey(winId));
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
 }
 
 function setConnNote(msg){
@@ -84,7 +126,8 @@ function setLiveBadge(mode){
   }
 }
 
-async function loadWindow(){
+async function loadWindow(opts){
+  const silent = !!(opts && opts.silent);
   document.getElementById('pageTitle').textContent = 'FIBA WCQ — ' + (WINDOWS.find(w=>w.id===state.windowId)||{}).label;
   if(!state.backendUrl || !state.adminToken){
     setConnNote(!state.backendUrl
@@ -95,32 +138,53 @@ async function loadWindow(){
     renderAll();
     return;
   }
-  setLiveBadge('connecting');
-  setConnNote(state.games.length ? '' : 'Connecting to your Google Sheet — this can take up to a minute on the first load.');
+
+  let paintedFromCache = false;
+  if(!silent){
+    const cached = loadCache(state.windowId);
+    if(cached && (cached.games || []).length){
+      state.games = cached.games || []; state.teams = cached.teams || {}; state.palette = cached.palette || [];
+      renderAll();
+      paintedFromCache = true;
+    }
+    setLiveBadge('connecting');
+    setConnNote(paintedFromCache ? '' : 'Connecting to your Google Sheet — this can take up to a minute on the first load.');
+  }
+
   try{
     const data = await apiGet({ action: 'data', window: state.windowId, token: state.adminToken });
     if(data.error){
-      setConnNote('Backend error: ' + data.error);
-      setLiveBadge('offline');
+      state.syncFailures++;
+      if(!silent || state.syncFailures > 2){ setConnNote('Backend error: ' + data.error); setLiveBadge('offline'); }
     } else {
+      state.syncFailures = 0;
       setConnNote('');
       setLiveBadge('live');
       state.games = data.games || [];
       state.teams = data.teams || {};
       state.palette = data.palette || [];
       state.lastSync = new Date();
+      saveCache(state.windowId, { games: state.games, teams: state.teams, palette: state.palette });
+      renderAll();
     }
   }catch(e){
     console.error(e);
-    setConnNote('Could not reach the backend — check the Web App URL and that access is set to "Anyone".');
-    setLiveBadge('offline');
+    state.syncFailures++;
+    // A single missed background poll isn't worth alarming over — the
+    // page keeps showing the last good data. Only surface it after it
+    // keeps failing, or if this was a load the user is actively waiting on.
+    if(!silent || state.syncFailures > 2){
+      setConnNote(paintedFromCache
+        ? 'Having trouble reaching the backend — showing the last data that loaded successfully.'
+        : 'Could not reach the backend — check the Web App URL and that access is set to "Anyone".');
+      setLiveBadge('offline');
+    }
   }
-  renderAll();
 }
 
 function startPolling(){
   if(state.pollTimer) clearInterval(state.pollTimer);
-  state.pollTimer = setInterval(()=>{ if(document.visibilityState === 'visible') loadWindow(); }, POLL_MS);
+  state.pollTimer = setInterval(()=>{ if(document.visibilityState === 'visible') loadWindow({ silent: true }); }, POLL_MS);
 }
 
 function startClock(){
@@ -312,32 +376,39 @@ function renderZoneChips(){
   });
 }
 
+function statusLabel(status){ return status==='ok' ? 'OK' : status==='issue' ? 'Issue' : 'Pending'; }
+
 function statusWidgetHtml(field, obj){
   const status = obj.status || 'pending', note = obj.note || '';
   const okActive = status === 'ok';
   const wrapClass = status==='ok' ? 'bg-emerald-500/15 border-emerald-500/30' : (status==='issue' ? 'bg-amber-500/15 border-amber-500/30' : 'bg-slate-700/30 border-slate-600/30');
-  const textClass = status==='ok' ? 'text-emerald-300 placeholder-emerald-400/40' : (status==='issue' ? 'text-amber-300 placeholder-amber-400/40' : 'text-slate-400 placeholder-slate-500');
+  const textClass = status==='ok' ? 'text-emerald-200' : (status==='issue' ? 'text-amber-200' : 'text-slate-500');
+  const labelClass = status==='ok' ? 'text-emerald-300' : (status==='issue' ? 'text-amber-300' : 'text-slate-400');
   const icon = status==='ok' ? '✓' : (status==='issue' ? '⚠' : '○');
   const okClass = okActive ? 'bg-emerald-400 border-emerald-300 text-emerald-950' : 'border-slate-600 text-slate-500 hover:text-slate-300';
   return `
-    <div class="status-widget inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full border max-w-full ${wrapClass}" data-field="${field}" data-ok="${okActive}">
-      <span class="status-icon text-[11px] shrink-0 leading-none">${icon}</span>
-      <input type="text" value="${esc(note)}" placeholder="No note" class="status-note bg-transparent text-[11px] font-medium focus:outline-none w-full min-w-[64px] leading-none ${textClass}">
-      <button type="button" title="Mark OK" class="ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ${okClass}">✓</button>
+    <div class="status-widget rounded-md border px-1.5 py-1 flex flex-col gap-0.5 w-full min-w-[170px] ${wrapClass}" data-field="${field}" data-ok="${okActive}">
+      <div class="flex items-center justify-between gap-1">
+        <span class="status-label text-[10px] font-bold leading-none ${labelClass}"><span class="status-icon">${icon}</span> ${statusLabel(status)}</span>
+        <button type="button" title="Mark OK" class="ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ${okClass}">✓</button>
+      </div>
+      <textarea rows="2" placeholder="No note" class="status-note w-full bg-transparent text-[11px] leading-tight resize-none overflow-y-auto focus:outline-none ${textClass}">${esc(note)}</textarea>
     </div>`;
 }
 
 function restyleStatusWidget(widget, status){
   const noteEl = widget.querySelector('.status-note');
   const okBtn = widget.querySelector('.ok-btn');
-  const iconEl = widget.querySelector('.status-icon');
-  widget.className = 'status-widget inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full border max-w-full ' +
+  const labelEl = widget.querySelector('.status-label');
+  widget.className = 'status-widget rounded-md border px-1.5 py-1 flex flex-col gap-0.5 w-full min-w-[170px] ' +
     (status==='ok' ? 'bg-emerald-500/15 border-emerald-500/30' : status==='issue' ? 'bg-amber-500/15 border-amber-500/30' : 'bg-slate-700/30 border-slate-600/30');
-  noteEl.className = 'status-note bg-transparent text-[11px] font-medium focus:outline-none w-full min-w-[64px] leading-none ' +
-    (status==='ok' ? 'text-emerald-300 placeholder-emerald-400/40' : status==='issue' ? 'text-amber-300 placeholder-amber-400/40' : 'text-slate-400 placeholder-slate-500');
+  noteEl.className = 'status-note w-full bg-transparent text-[11px] leading-tight resize-none overflow-y-auto focus:outline-none ' +
+    (status==='ok' ? 'text-emerald-200' : status==='issue' ? 'text-amber-200' : 'text-slate-500');
   okBtn.className = 'ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ' +
     (status==='ok' ? 'bg-emerald-400 border-emerald-300 text-emerald-950' : 'border-slate-600 text-slate-500 hover:text-slate-300');
-  iconEl.textContent = status==='ok' ? '✓' : (status==='issue' ? '⚠' : '○');
+  labelEl.className = 'status-label text-[10px] font-bold leading-none ' +
+    (status==='ok' ? 'text-emerald-300' : status==='issue' ? 'text-amber-300' : 'text-slate-400');
+  labelEl.innerHTML = `<span class="status-icon">${status==='ok'?'✓':status==='issue'?'⚠':'○'}</span> ${statusLabel(status)}`;
   widget.dataset.ok = (status === 'ok') ? 'true' : 'false';
 }
 
@@ -618,37 +689,44 @@ function renderPairing(){
   const tbody = document.getElementById('pairingBody');
   const list = state.games.filter(g=>g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
   if(!list.length){ tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
-  const swatchBtn = (code, slot, hex) => {
-    const s = (slot === 'light' || slot === 'dark' || slot === 'alternate') ? slot : 'dark';
-    return `<button type="button" class="pick-swatch w-5 h-5 rounded border border-white/15" style="background:${esc(hex)}" data-pick="${code}:${s}" title="Edit ${esc(code)} colour"></button>`;
-  };
+  const swatchBtn = (gameId, side, code, hex) =>
+    `<button type="button" class="pick-swatch w-5 h-5 rounded border border-white/15" style="background:${esc(hex)}" data-pick-game="${gameId}:${side}" title="Set ${esc(code)}'s colour for this game only"></button>`;
   tbody.innerHTML = list.map(g=>`
     <tr data-fixture-row="${g.id}">
       <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
-      <td class="py-2 px-3 text-right" data-slot-row="${g.home}:${g.homeColor.slot}"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span>${swatchBtn(g.home, g.homeColor.slot, g.homeColor.hex)}</span></td>
+      <td class="py-2 px-3 text-right" data-game-slot="${g.id}:home"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span>${swatchBtn(g.id, 'home', g.home, g.homeColor.hex)}</span></td>
       <td class="py-2 px-2 text-center text-slate-600 w-8">–</td>
-      <td class="py-2 px-3" data-slot-row="${g.away}:${g.awayColor.slot}"><span class="inline-flex items-center gap-2">${swatchBtn(g.away, g.awayColor.slot, g.awayColor.hex)}<span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
+      <td class="py-2 px-3" data-game-slot="${g.id}:away"><span class="inline-flex items-center gap-2">${swatchBtn(g.id, 'away', g.away, g.awayColor.hex)}<span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
     </tr>
   `).join('');
 
-  tbody.querySelectorAll('[data-pick]').forEach(sw=>{
+  tbody.querySelectorAll('[data-pick-game]').forEach(sw=>{
     sw.addEventListener('click', ()=>{
-      const row = sw.closest('[data-slot-row]');
+      const row = sw.closest('[data-game-slot]');
       document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
       const wasOpenHere = row.dataset.pickerOpen === 'true';
-      tbody.querySelectorAll('[data-slot-row]').forEach(r=>r.dataset.pickerOpen='false');
+      tbody.querySelectorAll('[data-game-slot]').forEach(r=>r.dataset.pickerOpen='false');
       if(wasOpenHere) return;
-      const [teamCode, slot] = sw.dataset.pick.split(':');
-      row.insertAdjacentHTML('beforeend', palettePickerHtml(teamCode, slot));
+      const [gameId, side] = sw.dataset.pickGame.split(':');
+      row.insertAdjacentHTML('beforeend', palettePickerHtml(gameId, side));
       row.dataset.pickerOpen = 'true';
       row.querySelectorAll('[data-pick-apply]').forEach(pb=>{
         pb.addEventListener('click', ()=>{
-          const [tc, sl, hex] = pb.dataset.pickApply.split(':');
-          writeTeamField(tc, sl, hex);
+          const [gid, sd, hex] = pb.dataset.pickApply.split(':');
+          writeGameColor(gid, sd, hex);
         });
       });
     });
   });
+}
+
+function writeGameColor(gameId, side, hex){
+  const g = state.games.find(x=>x.id===gameId);
+  const field = side === 'home' ? 'homeColor' : 'awayColor';
+  if(g) g[field] = { hex, slot: 'custom' };
+  renderGames(); renderPairing();
+  if(!state.backendUrl) return;
+  apiPost({ action:'updateGame', window: state.windowId, id: gameId, field, value: { hex } }).catch(e=>console.error(e));
 }
 
 /* ---------------- footer ---------------- */

@@ -182,6 +182,16 @@ function updateGame(body){
   if(body.field === 'backupClock'){ setCol('backupClockStatus', body.value.status); setCol('backupClockNote', body.value.note || ''); }
   else if(body.field === 'gfxExample'){ setCol('gfxExampleStatus', body.value.status); setCol('gfxExampleNote', body.value.note || ''); }
   else if(body.field === 'remarks'){ setCol('remarks', body.value); }
+  else if(body.field === 'homeColor'){
+    var hHex = normalizeHex(body.value.hex);
+    if(!hHex) return { error:'invalid hex' };
+    setCol('homeColorHex', hHex); setCol('homeColorSlot', 'custom');
+  }
+  else if(body.field === 'awayColor'){
+    var aHex = normalizeHex(body.value.hex);
+    if(!aHex) return { error:'invalid hex' };
+    setCol('awayColorHex', aHex); setCol('awayColorSlot', 'custom');
+  }
   else return { error:'unknown field' };
   return { ok:true };
 }
