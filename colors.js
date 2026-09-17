@@ -110,7 +110,7 @@ function contrastTextColor(hex){
 function teamStripeHtml(homeCode, homeHex, awayCode, awayHex){
   return `
   <div class="score-stripe">
-    <div class="stripe-badge" aria-hidden="true"><span class="stripe-badge-icon">🏆</span><span class="stripe-badge-txt"><span>WORLD CUP</span><span>QUALIFIERS</span></span></div>
+    <div class="stripe-badge" aria-hidden="true" role="img" title="World Cup Qualifiers"></div>
     <div class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}">
       <span class="stripe-code">${esc(homeCode)}</span><span class="stripe-score">00</span>
     </div>
