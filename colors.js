@@ -110,11 +110,11 @@ function contrastTextColor(hex){
 function teamStripeHtml(homeCode, homeHex, awayCode, awayHex){
   return `
   <div class="score-stripe">
-    <div class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}">
+    <div class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}" data-copy="${esc(homeHex)}" title="Copy ${esc(homeCode)}'s colour for this game (${esc(homeHex)})">
       <span class="stripe-code">${esc(homeCode)}</span>
     </div>
     <div class="stripe-gap"></div>
-    <div class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}">
+    <div class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}" data-copy="${esc(awayHex)}" title="Copy ${esc(awayCode)}'s colour for this game (${esc(awayHex)})">
       <span class="stripe-code">${esc(awayCode)}</span>
     </div>
   </div>`;
@@ -189,10 +189,13 @@ function renderPairing(){
     ? PAIRINGS.filter(pairingMatches)
     : PAIRINGS.filter(g=>g.continent===activeContinent);
   if(!list.length){
-    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">${search ? `No fixtures match "${esc(search)}".` : 'No fixtures for this confederation yet.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="2" class="text-center text-slate-500 py-6">${search ? `No fixtures match "${esc(search)}".` : 'No fixtures for this confederation yet.'}</td></tr>`;
     return;
   }
   tbody.innerHTML = list.map(pairingRowHtml).join('');
+  tbody.querySelectorAll('[data-copy]').forEach(el=>{
+    el.addEventListener('click', ()=> copyText(el.dataset.copy, el.querySelector('.stripe-code')));
+  });
 }
 
 function renderAll(){ renderPalette(); renderContinentTabs(); renderTeams(); renderPairing(); }

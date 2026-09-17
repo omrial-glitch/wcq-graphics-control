@@ -194,9 +194,11 @@ function init(){
   document.getElementById('backToScheduleBtn').addEventListener('click', ()=> switchTab('games'));
 
   document.addEventListener('click', (e)=>{
-    if(e.target.closest('.pick-swatch, .palette-picker')) return;
+    if(e.target.closest('.pick-swatch, .palette-picker, [data-pick-game]')) return;
+    const hadOpenPicker = document.querySelector('.palette-picker') !== null;
     document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
     document.querySelectorAll('[data-slot-row], [data-game-slot]').forEach(r=>{ r.dataset.pickerOpen = 'false'; });
+    if(hadOpenPicker) renderPairing();
   });
 
   document.getElementById('searchInput').addEventListener('input', (e)=>{
@@ -752,6 +754,7 @@ function teamStripeHtml(gameId, homeCode, homeHex, awayCode, awayHex){
 
 function renderPairing(){
   const tbody = document.getElementById('pairingBody');
+  if(tbody.querySelector('[data-picker-open="true"]')) return;
   const list = state.games.filter(g=>g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
   if(!list.length){ tbody.innerHTML = `<tr><td colspan="2" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
   tbody.innerHTML = list.map(g=>`
