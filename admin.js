@@ -193,6 +193,12 @@ function init(){
   });
   document.getElementById('backToScheduleBtn').addEventListener('click', ()=> switchTab('games'));
 
+  document.addEventListener('click', (e)=>{
+    if(e.target.closest('.pick-swatch, .palette-picker')) return;
+    document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
+    document.querySelectorAll('[data-slot-row], [data-game-slot]').forEach(r=>{ r.dataset.pickerOpen = 'false'; });
+  });
+
   document.getElementById('searchInput').addEventListener('input', (e)=>{
     state.search = e.target.value.trim().toLowerCase();
     renderGames();
@@ -486,7 +492,7 @@ function renderGames(){
       <td class="px-3 py-1">${statusWidgetHtml('backupClock', bk)}</td>
       <td class="px-3 py-1">${statusWidgetHtml('gfxExample', gx)}</td>
       <td class="px-3 py-1">
-        <input type="text" value="${esc(g.remarks)}" placeholder="General note…" class="remarks-note w-full bg-[#0b0f19]/70 text-slate-300 text-xs px-2 py-1 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 focus:outline-none">
+        <textarea rows="3" placeholder="General note…" class="remarks-note w-full bg-[#0b0f19]/70 text-slate-300 text-xs leading-snug px-2 py-1.5 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 focus:outline-none resize-none overflow-y-auto">${esc(g.remarks)}</textarea>
       </td>
     </tr>`;
   });
@@ -497,7 +503,7 @@ function renderGames(){
 function autosize(ta){ ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight)+'px'; }
 
 function wireGameRowEvents(tbody){
-  tbody.querySelectorAll('input.remarks-note').forEach(inp=>{
+  tbody.querySelectorAll('textarea.remarks-note').forEach(inp=>{
     let timer;
     inp.addEventListener('input', ()=>{
       clearTimeout(timer);
@@ -708,9 +714,10 @@ function writeTeamField(code, slot, hex){
 function teamColorPickerHtml(gameId, side, teamCode){
   const t = state.teams[teamCode];
   const options = t ? [['light','Light',t.light], ['dark','Dark',t.dark], ['alternate','Alternate',t.alternate]].filter(o=>o[2]) : [];
-  if(!options.length) return `<div class="text-[10px] text-slate-500 py-1 px-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg mt-1">${teamCode} has no colours defined yet — set them in the Team Colours cards above.</div>`;
+  const anchor = side === 'home' ? 'right-0' : 'left-0';
+  if(!options.length) return `<div class="palette-picker absolute z-20 top-full ${anchor} mt-1 text-[10px] text-slate-500 py-1 px-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl whitespace-nowrap">${teamCode} has no colours defined yet — set them in the Team Colours cards above.</div>`;
   return `
-  <div class="palette-picker flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg mt-1">
+  <div class="palette-picker absolute z-20 top-full ${anchor} mt-1 flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl w-max">
     ${options.map(([slot,label,hex])=>`
       <button type="button" class="flex items-center gap-1.5 px-2 py-1 rounded border border-white/10 bg-[#111827] hover:bg-[#1a2234]" data-pick-apply="${gameId}:${side}:${hex}" title="${hex}">
         <span class="w-4 h-4 rounded border border-white/15" style="background:${hex}"></span>
@@ -727,10 +734,10 @@ function renderPairing(){
     `<button type="button" class="pick-swatch w-5 h-5 rounded border border-white/15" style="background:${esc(hex)}" data-pick-game="${gameId}:${side}:${code}" title="Set ${esc(code)}'s colour for this game only"></button>`;
   tbody.innerHTML = list.map(g=>`
     <tr data-fixture-row="${g.id}">
-      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
-      <td class="py-2 px-3 text-right" data-game-slot="${g.id}:home"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span>${swatchBtn(g.id, 'home', g.home, g.homeColor.hex)}</span></td>
-      <td class="py-2 px-2 text-center text-slate-600 w-8">–</td>
-      <td class="py-2 px-3" data-game-slot="${g.id}:away"><span class="inline-flex items-center gap-2">${swatchBtn(g.id, 'away', g.away, g.awayColor.hex)}<span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
+      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap align-top">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
+      <td class="py-2 px-3 text-right align-top relative" data-game-slot="${g.id}:home"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span>${swatchBtn(g.id, 'home', g.home, g.homeColor.hex)}</span></td>
+      <td class="py-2 px-2 text-center text-slate-600 w-8 align-top">–</td>
+      <td class="py-2 px-3 align-top relative" data-game-slot="${g.id}:away"><span class="inline-flex items-center gap-2">${swatchBtn(g.id, 'away', g.away, g.awayColor.hex)}<span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
     </tr>
   `).join('');
 
