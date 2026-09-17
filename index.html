@@ -40,15 +40,16 @@
   }
   .score-stripe{
     display:flex; align-items:stretch; height:38px; border-radius:5px; overflow:hidden;
-    background:#141414; box-shadow:0 1px 3px rgba(0,0,0,.45); width:100%; max-width:400px;
+    background:#141414; box-shadow:0 1px 3px rgba(0,0,0,.45); width:100%; max-width:440px;
     font-family:'Stepitup Condensed', Arial, sans-serif;
   }
   .stripe-badge{
-    flex:0 0 38px; display:flex; flex-direction:column; align-items:center; justify-content:center;
-    background:#1c1710; gap:1px;
+    flex:0 0 84px; display:flex; align-items:center; justify-content:center; gap:4px;
+    padding:0 6px; background:#1c1710;
   }
-  .stripe-badge-ball{ font-size:12px; line-height:1; }
-  .stripe-badge-txt{ font-size:8px; font-weight:700; letter-spacing:.05em; color:#caa457; line-height:1; font-family:Arial,sans-serif; }
+  .stripe-badge-icon{ font-size:16px; line-height:1; }
+  .stripe-badge-txt{ display:flex; flex-direction:column; line-height:1.15; font-family:Arial,sans-serif; }
+  .stripe-badge-txt span{ font-size:7px; font-weight:800; letter-spacing:.02em; color:#f0e6d2; white-space:nowrap; }
   .stripe-team{
     flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:space-between;
     gap:4px; padding:0 8px; border:0; background:none; cursor:default;

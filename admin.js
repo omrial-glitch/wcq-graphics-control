@@ -740,7 +740,7 @@ function teamStripeHtml(gameId, homeCode, homeHex, awayCode, awayHex){
   const awayText = contrastTextColor(awayHex);
   return `
   <div class="score-stripe">
-    <div class="stripe-badge" aria-hidden="true"><span class="stripe-badge-ball">🏀</span><span class="stripe-badge-txt">WCQ</span></div>
+    <div class="stripe-badge" aria-hidden="true"><span class="stripe-badge-icon">🏆</span><span class="stripe-badge-txt"><span>WORLD CUP</span><span>QUALIFIERS</span></span></div>
     <button type="button" class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${homeText}" data-pick-game="${gameId}:home:${homeCode}" title="Set ${esc(homeCode)}'s colour for this game only">
       <span class="stripe-code">${esc(homeCode)}</span><span class="stripe-score">00</span>
     </button>
