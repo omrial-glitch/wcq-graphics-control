@@ -10,15 +10,14 @@ const COMPANY_COLOR = {
   'Wtvision': 'cyan', 'Wtvision - Remote': 'cyan',
   'TAF': 'violet', 'TV Graphics': 'blue', 'Segev- Remote': 'amber', 'FIBA Americas': 'emerald',
 };
-const POLL_MS = 45000;
-
 const state = {
   windowId: 'w4', tab: 'games', zone: 'all', search: '', colorContinent: 'Africa',
   games: [], teams: {}, palette: [],
-  backendUrl: localStorage.getItem('wcq_backend_url') || '',
-  adminToken: localStorage.getItem('wcq_admin_token') || '',
-  lastSync: null, pollTimer: null, syncFailures: 0,
+  isAdmin: false, lastSync: null,
 };
+
+let auth, db;
+let unsubGames = null, unsubTeams = null, unsubPalette = null;
 
 function esc(s){
   if(s===undefined||s===null) return "";
@@ -52,58 +51,10 @@ function copyText(text, btnEl){
 
 /* ---------------- backend ---------------- */
 
-function apiGet(params){
-  const url = new URL(state.backendUrl);
-  Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,v));
-  return fetch(url.toString()).then(r=>r.json());
-}
-function apiPostOnce(payload){
-  return fetch(state.backendUrl, {
-    method: 'POST',
-    body: JSON.stringify(Object.assign({ token: state.adminToken }, payload)),
-  }).then(r=>r.json());
-}
-// Every write gets 2 retries with backoff before it's reported as failed —
-// a save should never silently vanish just because Apps Script had a slow
-// or transient blip.
-function apiPost(payload, attempt){
-  attempt = attempt || 1;
-  return apiPostOnce(payload).then(res=>{
-    if(res && res.error){ throw new Error(res.error); }
-    return res;
-  }).catch(err=>{
-    if(attempt < 3){
-      return new Promise(resolve=>setTimeout(resolve, attempt * 1000))
-        .then(()=> apiPost(payload, attempt + 1));
-    }
-    showToast('Save failed — check your connection and try again.', 'error');
-    throw err;
-  });
-}
-
-function showToast(msg, kind){
-  const stack = document.getElementById('toastStack');
-  const el = document.createElement('div');
-  const styles = {
-    ok: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200',
-    error: 'bg-rose-500/15 border-rose-500/40 text-rose-200',
-    info: 'bg-slate-700/40 border-slate-600/40 text-slate-200',
-  };
-  el.className = `px-3 py-2 rounded-lg border text-xs font-medium shadow-lg max-w-[280px] ${styles[kind] || styles.info}`;
-  el.textContent = msg;
-  stack.appendChild(el);
-  setTimeout(()=>{ el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(()=>el.remove(), 300); }, 4000);
-}
-
-function cacheKey(winId){ return 'wcq_cache_' + winId; }
-function saveCache(winId, data){
-  try{ localStorage.setItem(cacheKey(winId), JSON.stringify({ ...data, ts: Date.now() })); }catch(e){}
-}
-function loadCache(winId){
-  try{
-    const raw = localStorage.getItem(cacheKey(winId));
-    return raw ? JSON.parse(raw) : null;
-  }catch(e){ return null; }
+function initFirebase(){
+  firebase.initializeApp(FIREBASE_CONFIG);
+  auth = firebase.auth();
+  db = firebase.firestore();
 }
 
 function setConnNote(msg){
@@ -126,66 +77,76 @@ function setLiveBadge(mode){
   }
 }
 
-async function loadWindow(opts){
-  const silent = !!(opts && opts.silent);
-  document.getElementById('pageTitle').textContent = 'FIBA WCQ — ' + (WINDOWS.find(w=>w.id===state.windowId)||{}).label;
-  if(!state.backendUrl || !state.adminToken){
-    setConnNote(!state.backendUrl
-      ? 'Not connected — click the gear icon to link your Google Sheet backend.'
-      : 'Missing admin key — click the gear icon and enter the ADMIN_TOKEN you set in Script Properties.');
+function showToast(msg, kind){
+  const stack = document.getElementById('toastStack');
+  const el = document.createElement('div');
+  const styles = {
+    ok: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200',
+    error: 'bg-rose-500/15 border-rose-500/40 text-rose-200',
+    info: 'bg-slate-700/40 border-slate-600/40 text-slate-200',
+  };
+  el.className = `px-3 py-2 rounded-lg border text-xs font-medium shadow-lg max-w-[280px] ${styles[kind] || styles.info}`;
+  el.textContent = msg;
+  stack.appendChild(el);
+  setTimeout(()=>{ el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(()=>el.remove(), 300); }, 4000);
+}
+
+function detachListeners(){
+  if(unsubGames){ unsubGames(); unsubGames = null; }
+  if(unsubTeams){ unsubTeams(); unsubTeams = null; }
+  if(unsubPalette){ unsubPalette(); unsubPalette = null; }
+}
+
+function attachListeners(windowId){
+  detachListeners();
+  state.games = []; state.teams = {}; state.palette = [];
+  setLiveBadge('connecting');
+  setConnNote('');
+  renderAll();
+
+  unsubGames = db.collection(`windows/${windowId}/games`).onSnapshot(snap=>{
+    state.games = snap.docs.map(d=>Object.assign({ id: d.id }, d.data()));
+    setLiveBadge('live'); setConnNote(''); state.lastSync = new Date();
+    renderAll();
+  }, err=>{
+    console.error(err);
+    setConnNote('Could not read the schedule: ' + err.message);
     setLiveBadge('offline');
+  });
+
+  unsubTeams = db.collection(`windows/${windowId}/teams`).onSnapshot(snap=>{
+    const t = {};
+    snap.docs.forEach(d=>{ t[d.id] = Object.assign({ code: d.id }, d.data()); });
+    state.teams = t;
+    renderAll();
+  }, err=>console.error(err));
+
+  unsubPalette = db.collection('palette').onSnapshot(snap=>{
+    state.palette = snap.docs.map(d=>d.data().hex);
+    renderAll();
+  }, err=>console.error(err));
+}
+
+function updateAuthUI(){
+  document.getElementById('settingsSignOut').classList.toggle('hidden', !state.isAdmin);
+  document.getElementById('settingsSave').textContent = state.isAdmin ? 'Signed in' : 'Sign in';
+  document.getElementById('authModalTitle').textContent = state.isAdmin ? 'Signed in' : 'Sign in';
+  document.getElementById('authModalLede').textContent = state.isAdmin
+    ? `Signed in as ${auth.currentUser.email}.`
+    : 'Sign in with the admin account to view and edit the schedule.';
+}
+
+function loadWindow(){
+  if(!state.isAdmin){
     state.games = []; state.teams = {}; state.palette = [];
+    setLiveBadge('offline');
+    setConnNote('Sign in (gear icon) to view and edit the schedule.');
     renderAll();
     return;
   }
-
-  let paintedFromCache = false;
-  if(!silent){
-    const cached = loadCache(state.windowId);
-    if(cached && (cached.games || []).length){
-      state.games = cached.games || []; state.teams = cached.teams || {}; state.palette = cached.palette || [];
-      renderAll();
-      paintedFromCache = true;
-    }
-    setLiveBadge('connecting');
-    setConnNote(paintedFromCache ? '' : 'Connecting to your Google Sheet — this can take up to a minute on the first load.');
-  }
-
-  try{
-    const data = await apiGet({ action: 'data', window: state.windowId, token: state.adminToken });
-    if(data.error){
-      state.syncFailures++;
-      if(!silent || state.syncFailures > 2){ setConnNote('Backend error: ' + data.error); setLiveBadge('offline'); }
-    } else {
-      state.syncFailures = 0;
-      setConnNote('');
-      setLiveBadge('live');
-      state.games = data.games || [];
-      state.teams = data.teams || {};
-      state.palette = data.palette || [];
-      state.lastSync = new Date();
-      saveCache(state.windowId, { games: state.games, teams: state.teams, palette: state.palette });
-      renderAll();
-    }
-  }catch(e){
-    console.error(e);
-    state.syncFailures++;
-    // A single missed background poll isn't worth alarming over — the
-    // page keeps showing the last good data. Only surface it after it
-    // keeps failing, or if this was a load the user is actively waiting on.
-    if(!silent || state.syncFailures > 2){
-      setConnNote(paintedFromCache
-        ? 'Having trouble reaching the backend — showing the last data that loaded successfully.'
-        : 'Could not reach the backend — check the Web App URL and that access is set to "Anyone".');
-      setLiveBadge('offline');
-    }
-  }
+  attachListeners(state.windowId);
 }
 
-function startPolling(){
-  if(state.pollTimer) clearInterval(state.pollTimer);
-  state.pollTimer = setInterval(()=>{ if(document.visibilityState === 'visible') loadWindow({ silent: true }); }, POLL_MS);
-}
 
 function startClock(){
   const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -216,6 +177,8 @@ function switchTab(name){
 }
 
 function init(){
+  initFirebase();
+
   const winSel = document.getElementById('windowSelect');
   WINDOWS.forEach(w=>{
     const opt = document.createElement('option');
@@ -247,7 +210,8 @@ function init(){
     if(!state.palette.includes(hex)) state.palette.push(hex);
     renderPalette();
     input.value = '';
-    if(state.backendUrl) apiPost({ action: 'addPaletteColor', hex }).catch(e=>console.error(e));
+    if(state.isAdmin) db.collection('palette').doc(hex.replace('#','')).set({ hex })
+      .catch(e=>{ console.error(e); showToast('Could not save colour.', 'error'); });
   });
 
   document.getElementById('addTeamForm').addEventListener('submit', (e)=>{
@@ -261,40 +225,66 @@ function init(){
     if(!code || !name){ if(!code) codeInput.classList.add('border-rose-500'); if(!name) nameInput.classList.add('border-rose-500'); return; }
     if(state.teams[code]){ codeInput.classList.add('border-rose-500'); return; }
     codeInput.classList.remove('border-rose-500'); nameInput.classList.remove('border-rose-500');
-    state.teams[code] = { code, name, continent, light: null, dark: null, alternate: null };
+    const teamDoc = { code, name, continent, light: null, dark: null, alternate: null };
+    state.teams[code] = teamDoc;
     state.colorContinent = continent;
     renderColorContinentTabs(); renderTeamColors(); renderPairing();
     codeInput.value=''; nameInput.value='';
-    if(state.backendUrl) apiPost({ action:'addTeam', window: state.windowId, code, name, continent }).catch(e=>console.error(e));
+    if(state.isAdmin) db.doc(`windows/${state.windowId}/teams/${code}`).set(teamDoc)
+      .catch(e=>{ console.error(e); showToast('Could not add team.', 'error'); });
+  });
+
+  document.getElementById('importSeedBtn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('importSeedBtn');
+    btn.disabled = true; btn.textContent = 'Importing…';
+    try{ await importSeedData(state.windowId); showToast('Import complete.', 'ok'); }
+    catch(e){ console.error(e); showToast('Import failed: ' + e.message, 'error'); }
+    btn.disabled = false; btn.textContent = 'Import ' + ((WINDOWS.find(w=>w.id===state.windowId)||{}).label || 'data');
   });
 
   wireSettingsModal();
   startClock();
-  loadWindow();
-  startPolling();
+
+  auth.onAuthStateChanged(user=>{
+    state.isAdmin = !!(user && user.email === ADMIN_EMAIL);
+    updateAuthUI();
+    if(state.isAdmin){
+      const backdrop = document.getElementById('settingsBackdrop');
+      backdrop.classList.add('hidden'); backdrop.classList.remove('flex');
+      loadWindow();
+    } else {
+      detachListeners();
+      state.games = []; state.teams = {}; state.palette = [];
+      setLiveBadge('offline');
+      setConnNote('Sign in (gear icon) to view and edit the schedule.');
+      renderAll();
+      const backdrop = document.getElementById('settingsBackdrop');
+      backdrop.classList.remove('hidden'); backdrop.classList.add('flex');
+    }
+  });
 }
 
 function wireSettingsModal(){
   const backdrop = document.getElementById('settingsBackdrop');
-  const openModal = () => {
-    document.getElementById('backendUrlInput').value = state.backendUrl;
-    document.getElementById('adminTokenInput').value = state.adminToken;
-    backdrop.classList.remove('hidden'); backdrop.classList.add('flex');
-  };
+  const openModal = () => { backdrop.classList.remove('hidden'); backdrop.classList.add('flex'); };
   const closeModal = () => { backdrop.classList.add('hidden'); backdrop.classList.remove('flex'); };
   document.getElementById('settingsBtn').addEventListener('click', openModal);
   document.getElementById('settingsCancel').addEventListener('click', closeModal);
   backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeModal(); });
+  document.getElementById('settingsSignOut').addEventListener('click', ()=>{ auth.signOut(); });
   document.getElementById('settingsSave').addEventListener('click', ()=>{
-    const url = document.getElementById('backendUrlInput').value.trim();
-    const token = document.getElementById('adminTokenInput').value.trim();
-    state.backendUrl = url; state.adminToken = token;
-    localStorage.setItem('wcq_backend_url', url);
-    localStorage.setItem('wcq_admin_token', token);
-    closeModal();
-    loadWindow();
+    if(state.isAdmin) return; // button reads "Signed in" then, no-op
+    const email = document.getElementById('authEmailInput').value.trim();
+    const password = document.getElementById('authPasswordInput').value;
+    const errEl = document.getElementById('authError');
+    errEl.classList.add('hidden');
+    auth.signInWithEmailAndPassword(email, password).then(()=>{
+      closeModal();
+    }).catch(err=>{
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    });
   });
-  if(!state.backendUrl || !state.adminToken) setTimeout(openModal, 300);
 }
 
 function renderAll(){
@@ -420,9 +410,24 @@ function renderGames(){
 
   if(!state.games.length){
     const winLabel = (WINDOWS.find(w=>w.id===state.windowId)||{}).label || 'this window';
-    document.getElementById('emptyWindowTitle').textContent = state.backendUrl
-      ? `No data yet for ${winLabel}`
-      : 'Not connected — click the gear icon to link your Google Sheet';
+    const importBtn = document.getElementById('importSeedBtn');
+    const subtitle = document.getElementById('emptyWindowSubtitle');
+    if(!state.isAdmin){
+      document.getElementById('emptyWindowTitle').textContent = 'Sign in to view this window';
+      subtitle.textContent = 'Click the gear icon and sign in with the admin account.';
+      importBtn.classList.add('hidden');
+    } else {
+      document.getElementById('emptyWindowTitle').textContent = `No data yet for ${winLabel}`;
+      const hasSeed = typeof SEED_DATA !== 'undefined' && SEED_DATA[state.windowId];
+      if(hasSeed){
+        subtitle.textContent = 'This window\'s data is ready to load from the Excel import prepared earlier.';
+        importBtn.textContent = 'Import ' + winLabel;
+        importBtn.classList.remove('hidden');
+      } else {
+        subtitle.textContent = 'Send the Excel files for this window to Claude and they\'ll be imported here — the schedule, crew and colours all come from a real import, never typed in by hand.';
+        importBtn.classList.add('hidden');
+      }
+    }
     banner.classList.remove('hidden');
     tableWrap.classList.add('hidden');
     return;
@@ -512,7 +517,8 @@ function wireStatusWidgets(tbody){
       const g = state.games.find(x=>x.id===id);
       if(g) g[field] = { status, note: ta.value };
       renderKpiStrip();
-      if(state.backendUrl) apiPost({ action:'updateGame', window: state.windowId, id, field, value: { status, note: ta.value } }).catch(e=>console.error(e));
+      if(state.isAdmin) db.doc(`windows/${state.windowId}/games/${id}`).update({ [field]: { status, note: ta.value } })
+        .catch(e=>{ console.error(e); showToast('Could not save — check your connection.', 'error'); });
     };
 
     let timer;
@@ -537,8 +543,9 @@ function wireStatusWidgets(tbody){
 function writeGameField(id, field, value){
   const g = state.games.find(x=>x.id===id);
   if(g) g[field] = value;
-  if(!state.backendUrl) return;
-  apiPost({ action: 'updateGame', window: state.windowId, id, field, value }).catch(e=>console.error(e));
+  if(!state.isAdmin) return;
+  db.doc(`windows/${state.windowId}/games/${id}`).update({ [field]: value })
+    .catch(e=>{ console.error(e); showToast('Could not save — check your connection.', 'error'); });
 }
 
 /* ---------------- team colours tab ---------------- */
@@ -571,7 +578,8 @@ function renderPalette(){
       const hex = b.dataset.remove;
       state.palette = state.palette.filter(h=>h!==hex);
       renderPalette();
-      if(state.backendUrl) apiPost({ action: 'removePaletteColor', hex }).catch(e=>console.error(e));
+      if(state.isAdmin) db.collection('palette').doc(hex.replace('#','')).delete()
+        .catch(e=>{ console.error(e); showToast('Could not remove colour.', 'error'); });
     });
   });
 }
@@ -609,7 +617,7 @@ function renderTeamColors(){
   document.getElementById('colorsColTitle').textContent = `Team Colours — ${CONT_LABEL[state.colorContinent]}`;
   document.getElementById('fixturesColTitle').textContent = `${CONT_LABEL[state.colorContinent]} Fixtures`;
   if(!Object.keys(teams).length){
-    wrap.innerHTML = `<div class="text-slate-500 text-xs py-4">${state.backendUrl ? 'No team colours loaded for this window yet.' : 'Connect a backend via the gear icon to load data.'}</div>`;
+    wrap.innerHTML = `<div class="text-slate-500 text-xs py-4">${state.isAdmin ? 'No team colours loaded for this window yet.' : 'Sign in via the gear icon to load data.'}</div>`;
     return;
   }
   const list = Object.values(teams).filter(t=>t.continent===state.colorContinent).sort((a,b)=>a.name.localeCompare(b.name));
@@ -655,7 +663,8 @@ function renderTeamColors(){
       if(!confirm(`Delete ${code} from Team Colours? This does not remove it from the schedule.`)) return;
       delete state.teams[code];
       renderColorContinentTabs(); renderTeamColors(); renderPairing();
-      if(state.backendUrl) apiPost({ action:'deleteTeam', window: state.windowId, code }).catch(e=>console.error(e));
+      if(state.isAdmin) db.doc(`windows/${state.windowId}/teams/${code}`).delete()
+        .catch(e=>{ console.error(e); showToast('Could not delete team.', 'error'); });
     });
   });
   wrap.querySelectorAll('[data-pick]').forEach(sw=>{
@@ -679,8 +688,9 @@ function renderTeamColors(){
 function writeTeamField(code, slot, hex){
   if(state.teams[code]) state.teams[code][slot] = hex;
   renderTeamColors(); renderGames(); renderPairing();
-  if(!state.backendUrl) return;
-  apiPost({ action: 'updateTeamColor', window: state.windowId, code, slot, hex }).catch(e=>console.error(e));
+  if(!state.isAdmin) return;
+  db.doc(`windows/${state.windowId}/teams/${code}`).update({ [slot]: hex })
+    .catch(e=>{ console.error(e); showToast('Could not save colour.', 'error'); });
 }
 
 /* ---------------- pairing table ---------------- */
@@ -725,8 +735,12 @@ function writeGameColor(gameId, side, hex){
   const field = side === 'home' ? 'homeColor' : 'awayColor';
   if(g) g[field] = { hex, slot: 'custom' };
   renderGames(); renderPairing();
-  if(!state.backendUrl) return;
-  apiPost({ action:'updateGame', window: state.windowId, id: gameId, field, value: { hex } }).catch(e=>console.error(e));
+  if(!state.isAdmin) return;
+  db.doc(`windows/${state.windowId}/games/${gameId}`).update({ [field]: { hex, slot: 'custom' } })
+    .catch(e=>{ console.error(e); showToast('Could not save colour.', 'error'); });
+  const pubField = side === 'home' ? 'homeColorHex' : 'awayColorHex';
+  db.doc(`windows/${state.windowId}/publicPairings/${gameId}`).update({ [pubField]: hex })
+    .catch(e=>console.error('publicPairings mirror failed', e));
 }
 
 /* ---------------- footer ---------------- */
@@ -743,6 +757,43 @@ function renderFooter(){
   `;
   const conn = document.getElementById('footerConn');
   conn.textContent = state.lastSync ? `Synced ${state.lastSync.toLocaleTimeString('en-GB')}` : 'Not connected';
+}
+
+/* ---------------- one-time seed import ---------------- */
+
+async function importSeedData(windowId){
+  const seed = (typeof SEED_DATA !== 'undefined') ? SEED_DATA[windowId] : null;
+  if(!seed) throw new Error('No seed data prepared for this window');
+
+  const winLabel = (WINDOWS.find(w=>w.id===windowId)||{}).label || windowId;
+  const batches = [];
+  let batch = db.batch();
+  let opCount = 0;
+  function addOp(ref, data){
+    batch.set(ref, data);
+    opCount++;
+    if(opCount >= 400){ batches.push(batch); batch = db.batch(); opCount = 0; }
+  }
+
+  seed.games.forEach(g=>{
+    addOp(db.doc(`windows/${windowId}/games/${g.id}`), g);
+    addOp(db.doc(`windows/${windowId}/publicPairings/${g.id}`), {
+      id: g.id, dateLabel: g.dateLabel, dateISO: g.dateISO, sortKey: g.sortKey,
+      home: g.home, away: g.away,
+      homeColorHex: g.homeColor.hex, awayColorHex: g.awayColor.hex,
+      continent: g.continent,
+    });
+  });
+  Object.entries(seed.teams).forEach(([code, t])=>{
+    addOp(db.doc(`windows/${windowId}/teams/${code}`), t);
+  });
+  seed.palette.forEach(hex=>{
+    addOp(db.collection('palette').doc(hex.replace('#','')), { hex });
+  });
+  addOp(db.doc(`windows/${windowId}`), { id: windowId, label: winLabel, active: true });
+
+  batches.push(batch);
+  for(const b of batches) await b.commit();
 }
 
 init();

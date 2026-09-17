@@ -2,44 +2,38 @@
 
 Two static pages for tracking TV graphics production on FIBA World Cup Qualifier windows:
 
-- **`index.html`** — internal admin dashboard (game schedule, BOVM/GFX crew, backup clock & GFX example status, team colours editor). Requires the admin key below to read or write data.
-- **`colors.html`** — public colour reference for external graphics vendors (palette, team colours, colour pairing per game). No login needed.
+- **`index.html`** — internal admin dashboard (game schedule, BOVM/GFX crew, backup clock & GFX example status, team colours editor). Requires signing in with the admin account to read or write the schedule.
+- **`colors.html`** — public colour reference for external graphics vendors (palette, team colours, colour pairing per game). No login needed, no access to the schedule/crew data.
 
-Data lives in a Google Sheet, served through a small Apps Script Web App (`backend/Code.gs`). GitHub Pages only hosts the static HTML/CSS/JS; all reads and writes go to your own Google account.
+Data lives in **Firebase (Firestore)**, read and written directly from the browser via the Firebase SDK. GitHub Pages only hosts the static HTML/CSS/JS; `firebase-config.js` holds the project's public web config (not a secret — Firebase security comes from the Firestore rules below and from sign-in, not from hiding this file).
 
-## One-time backend setup (~10 minutes)
+## How access is controlled
 
-1. Go to [sheets.google.com](https://sheets.google.com) and create a new blank spreadsheet. Name it anything, e.g. "WCQ Graphics Data".
-2. In the sheet, open **Extensions → Apps Script**.
-3. Delete the placeholder code in `Code.gs`, then paste in the contents of `backend/Code.gs` from this repo.
-4. Click the gear icon **Project Settings** (left sidebar) → scroll to **Script Properties** → **Add script property**.
-   - Property: `ADMIN_TOKEN`
-   - Value: any password you choose (keep it private — this is what protects editing and the internal schedule).
-5. Click **Deploy → New deployment**.
-   - Type: **Web app**
-   - Execute as: **Me**
-   - Who has access: **Anyone**
-   - Click **Deploy**, then authorize the script with your Google account when prompted (this is expected — it's your own script accessing your own sheet).
-6. Copy the **Web app URL** it gives you (ends in `/exec`).
-7. Open `index.html` on the live site, click **Settings**, and paste in the Web app URL and the `ADMIN_TOKEN` you chose. This is saved only in your browser.
+Firestore rules (set in the Firebase console under Firestore Database → Rules) enforce:
+- `windows/{id}/games/**` (the full schedule — BOVM, GFX crew, statuses, notes): **admin only**, both read and write.
+- `windows/{id}/teams/**`, `windows/{id}/publicPairings/**`, `palette/**`: anyone can **read** (this is what `colors.html` shows), only the **admin** can write.
 
-Send the Web app URL and admin token to whoever should be able to run the admin dashboard from their own computer — anyone with the link but without the admin key can only see the public colour page.
+"Admin" means signed in with Firebase Authentication (Email/Password) as the one admin account created for this project — checked by email in the rules. Sign in from `index.html` via the gear icon.
 
 ## Where the data comes from
 
-The schedule, BOVM/GFX crew, venues and team colours are never typed in by hand — they're imported from the FIBA Excel files (production plan, BOVM/GFX sheets, uniform colours workbook). Whenever there's a new window or a revision to an existing one, send the updated Excel file(s) to Claude; it re-runs the same extraction/cross-referencing and imports it via one `bulkSeed` API call.
+The schedule, BOVM/GFX crew, venues and team colours are never typed in by hand — they're imported from the FIBA Excel files (production plan, BOVM/GFX sheets, uniform colours workbook). Whenever there's a new window or a revision to an existing one, send the updated Excel file(s) to Claude; it re-runs the same extraction/cross-referencing and prepares a fresh `seed-data.js` to import.
 
-Re-importing a window is safe: it refreshes schedule/crew/colour data from the new file, but **preserves** whatever backup-clock status, GFX-example status and notes you've already tracked in the app for existing games — that production-tracking data only ever lives in this sheet, never in the Excel files, so a re-import never erases it.
+The only things maintained directly in the app (not imported): live backup-clock/GFX-example status and notes on each game, manual colour tweaks in the Team Colours tab (both the team master colours and per-game colour overrides), and the palette.
 
-The only things maintained directly in the app (not imported) are: the live status/notes on each game, and any manual colour tweaks made in the Team Colours tab.
+## Loading a window for the first time
+
+`seed-data.js` carries the already-extracted data for a window (currently Window 4). Sign in as admin, select the window in the dropdown, and if it's empty you'll see an **"Import"** button — click it once to write that data into Firestore. Re-running it is safe to do again for the same window (it overwrites with the same values) but a *different* window's already-live data is never touched.
 
 ## Files
 
 ```
-index.html      admin dashboard
-colors.html     public colour reference
-styles.css      shared styling for both pages
-admin.js        admin dashboard logic
-colors.js       public colour page logic (with an embedded snapshot as a fallback)
-backend/Code.gs Apps Script backend — paste into your Google Sheet's script editor
+index.html          admin dashboard
+colors.html         public colour reference
+styles.css          shared styling for both pages
+admin.js            admin dashboard logic (Firebase Auth + Firestore)
+colors.js           public colour page logic (Firestore, read-only, with an embedded snapshot as a fallback)
+firebase-config.js  Firebase project config (public by design) + admin email used by the UI
+seed-data.js        one-time import payload for Window 4 (games, teams, palette)
+backend/Code.gs     retired — the earlier Google Sheets/Apps Script backend, kept only for history
 ```
