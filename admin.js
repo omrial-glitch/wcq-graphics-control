@@ -281,10 +281,10 @@ function renderKpiStrip(){
   const issues = g.filter(x=>(x.backupClock&&x.backupClock.status==='issue')||(x.gfxExample&&x.gfxExample.status==='issue')).length;
   document.getElementById('kpiStrip').innerHTML = `
     <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">Total Matches:</span><span class="text-sm font-bold text-white font-mono">${total}</span></div>
-    <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">Clock Cam OK:</span><span class="text-sm font-bold text-emerald-400 font-mono">${bkOk}<span class="text-xs text-slate-500 font-normal">/${total}</span></span></div>
+    <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">Clock Cam Valid:</span><span class="text-sm font-bold text-emerald-400 font-mono">${bkOk}<span class="text-xs text-slate-500 font-normal">/${total}</span></span></div>
     <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">GFX Ready:</span><span class="text-sm font-bold text-emerald-400 font-mono">${gfxOk}<span class="text-xs text-slate-500 font-normal">/${total}</span></span></div>
     <div class="pl-3 flex items-baseline gap-1.5"><span class="text-slate-400">Issues:</span>
-      <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold ${issues ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-slate-700/30 text-slate-400 border border-slate-700/40'}">${issues} flagged</span>
+      <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold ${issues ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-slate-700/30 text-slate-400 border border-slate-700/40'}">${issues} Pending</span>
     </div>`;
 }
 
@@ -299,9 +299,10 @@ function renderZoneChips(){
   CONT_ORDER.forEach(c=>{
     const active = state.zone === c;
     const hex = ZONE_HEX[c];
+    const zoneChipLabel = c === 'Asia' ? 'Asia-Oce' : CONT_LABEL[c];
     html += `<button data-zone="${c}" class="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs transition-colors ${active ? 'bg-[#1f2e48] text-white border border-[#3a5480]' : 'bg-[#162032] hover:bg-[#1f2e48] text-slate-300 border border-[#24334d]'}">
       <span class="w-2 h-2 rounded-full" style="background:#${hex}"></span>
-      <span>${CONT_LABEL[c]}</span>
+      <span>${zoneChipLabel}</span>
       <span class="text-slate-400 font-mono text-[10px]">(${counts[c]||0})</span>
     </button>`;
   });
@@ -314,34 +315,52 @@ function renderZoneChips(){
 function statusWidgetHtml(field, obj){
   const status = obj.status || 'pending', note = obj.note || '';
   const okActive = status === 'ok';
-  const wrapClass = status==='ok' ? 'border-emerald-500/40 bg-emerald-500/10' : (status==='issue' ? 'border-amber-500/40 bg-amber-500/10' : 'border-slate-700 bg-slate-800/30');
-  const textClass = status==='ok' ? 'text-emerald-100' : (status==='issue' ? 'text-amber-100' : 'text-slate-300');
-  const okClass = okActive ? 'bg-emerald-500/30 border-emerald-400 text-emerald-100' : 'bg-[#1a2234] border-[#2d3a54] text-slate-400';
+  const wrapClass = status==='ok' ? 'bg-emerald-500/15 border-emerald-500/30' : (status==='issue' ? 'bg-amber-500/15 border-amber-500/30' : 'bg-slate-700/30 border-slate-600/30');
+  const textClass = status==='ok' ? 'text-emerald-300 placeholder-emerald-400/40' : (status==='issue' ? 'text-amber-300 placeholder-amber-400/40' : 'text-slate-400 placeholder-slate-500');
+  const icon = status==='ok' ? '✓' : (status==='issue' ? '⚠' : '○');
+  const okClass = okActive ? 'bg-emerald-400 border-emerald-300 text-emerald-950' : 'border-slate-600 text-slate-500 hover:text-slate-300';
   return `
-    <div class="status-widget flex items-center gap-1.5 rounded-md border px-1.5 py-1 ${wrapClass}" data-field="${field}" data-ok="${okActive}">
-      <textarea rows="1" placeholder="No note" class="status-note flex-1 bg-transparent text-[11px] resize-none focus:outline-none overflow-y-auto leading-tight min-w-[110px] h-7 ${textClass}">${esc(note)}</textarea>
-      <button type="button" class="ok-btn shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${okClass}">OK</button>
+    <div class="status-widget inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full border max-w-full ${wrapClass}" data-field="${field}" data-ok="${okActive}">
+      <span class="status-icon text-[11px] shrink-0 leading-none">${icon}</span>
+      <input type="text" value="${esc(note)}" placeholder="No note" class="status-note bg-transparent text-[11px] font-medium focus:outline-none w-full min-w-[64px] leading-none ${textClass}">
+      <button type="button" title="Mark OK" class="ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ${okClass}">✓</button>
     </div>`;
 }
 
 function restyleStatusWidget(widget, status){
   const noteEl = widget.querySelector('.status-note');
   const okBtn = widget.querySelector('.ok-btn');
-  widget.className = 'status-widget flex items-center gap-1.5 rounded-md border px-1.5 py-1 ' +
-    (status==='ok' ? 'border-emerald-500/40 bg-emerald-500/10' : status==='issue' ? 'border-amber-500/40 bg-amber-500/10' : 'border-slate-700 bg-slate-800/30');
-  noteEl.className = 'status-note flex-1 bg-transparent text-[11px] resize-none focus:outline-none overflow-y-auto leading-tight min-w-[110px] h-7 ' +
-    (status==='ok' ? 'text-emerald-100' : status==='issue' ? 'text-amber-100' : 'text-slate-300');
-  okBtn.className = 'ok-btn shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ' +
-    (status==='ok' ? 'bg-emerald-500/30 border-emerald-400 text-emerald-100' : 'bg-[#1a2234] border-[#2d3a54] text-slate-400');
+  const iconEl = widget.querySelector('.status-icon');
+  widget.className = 'status-widget inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full border max-w-full ' +
+    (status==='ok' ? 'bg-emerald-500/15 border-emerald-500/30' : status==='issue' ? 'bg-amber-500/15 border-amber-500/30' : 'bg-slate-700/30 border-slate-600/30');
+  noteEl.className = 'status-note bg-transparent text-[11px] font-medium focus:outline-none w-full min-w-[64px] leading-none ' +
+    (status==='ok' ? 'text-emerald-300 placeholder-emerald-400/40' : status==='issue' ? 'text-amber-300 placeholder-amber-400/40' : 'text-slate-400 placeholder-slate-500');
+  okBtn.className = 'ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ' +
+    (status==='ok' ? 'bg-emerald-400 border-emerald-300 text-emerald-950' : 'border-slate-600 text-slate-500 hover:text-slate-300');
+  iconEl.textContent = status==='ok' ? '✓' : (status==='issue' ? '⚠' : '○');
   widget.dataset.ok = (status === 'ok') ? 'true' : 'false';
 }
 
 function renderGames(){
   const tbody = document.getElementById('gamesBody');
+  const banner = document.getElementById('emptyWindowBanner');
+  const tableWrap = document.getElementById('gamesTableWrap');
   const list = filteredGames();
+
+  if(!state.games.length){
+    const winLabel = (WINDOWS.find(w=>w.id===state.windowId)||{}).label || 'this window';
+    document.getElementById('emptyWindowTitle').textContent = state.backendUrl
+      ? `No data yet for ${winLabel}`
+      : 'Not connected — click the gear icon to link your Google Sheet';
+    banner.classList.remove('hidden');
+    tableWrap.classList.add('hidden');
+    return;
+  }
+  banner.classList.add('hidden');
+  tableWrap.classList.remove('hidden');
+
   if(!list.length){
-    tbody.innerHTML = `<tr><td colspan="9" class="text-center text-slate-500 py-10">
-      ${state.games.length ? 'No games match this filter' : (state.backendUrl ? 'No games loaded for this window yet' : 'Connect a backend via the gear icon to load data')}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center text-slate-500 py-10">No games match this filter</td></tr>`;
     return;
   }
   let html = '';
@@ -360,23 +379,23 @@ function renderGames(){
       <td class="px-3 py-1 text-center">
         <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase border" style="background:#${zoneHex}26;color:#${zoneHex};border-color:#${zoneHex}4d">${ZONE_ABBR[g.continent]||'?'}</span>
       </td>
-      <td class="px-3 py-1.5">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.homeColor.hex)}"></span>
-          <span class="font-semibold text-white">${esc(g.home)}</span>
-          <span class="text-slate-500 text-[10px]">vs</span>
-          <span class="font-semibold text-white">${esc(g.away)}</span>
-          <span class="w-3 h-3 rounded-sm border border-black/30" style="background:${esc(g.awayColor.hex)}"></span>
+      <td class="px-3 py-1">
+        <div class="flex items-center gap-2" title="${esc(g.home)} vs ${esc(g.away)}">
+          <span class="font-semibold text-white whitespace-nowrap">${esc(g.homeName)}</span>
+          <span class="inline-flex items-center gap-1 px-1 py-0.5 bg-[#0b0f19] border border-slate-700 rounded shrink-0">
+            <span class="w-3.5 h-3 rounded-sm border border-white/10" style="background:${esc(g.homeColor.hex)}"></span>
+            <span class="w-3.5 h-3 rounded-sm border border-white/10" style="background:${esc(g.awayColor.hex)}"></span>
+          </span>
+          <span class="font-semibold text-white whitespace-nowrap">${esc(g.awayName)}</span>
         </div>
-        <div class="text-[10px] text-slate-500 truncate mt-0.5">${esc(g.homeName)} — ${esc(g.awayName)}</div>
       </td>
-      <td class="px-3 py-1.5 text-slate-300"><div class="truncate max-w-[150px]">${esc(g.city)}</div><div class="text-[10px] text-slate-500 truncate max-w-[150px]">${esc(g.venue)}</div></td>
-      <td class="px-3 py-1.5 whitespace-nowrap">
-        <span class="font-bold text-white font-mono">${esc(g.espTime)}${g.espNextDay?' <span class="text-blue-400">+1</span>':''}</span>
-        <span class="text-[10px] text-slate-400 block font-mono">${esc(g.localTime)} ${esc(g.timeZone)} local</span>
+      <td class="px-3 py-1 text-slate-300"><div class="truncate max-w-[150px]" title="${esc(g.venue)}">${esc(g.city)} <span class="text-slate-500">(${esc(g.venue)})</span></div></td>
+      <td class="px-3 py-1 whitespace-nowrap" title="GMT ${esc(g.gmtTime)} · ${esc(g.timeZone)}">
+        <span class="font-bold text-white font-mono">${esc(g.espTime)}${g.espNextDay?' <span class="text-blue-400">+1</span>':''} CEST</span>
+        <span class="text-[10px] text-slate-400 block font-mono">${esc(g.localTime)} Local</span>
       </td>
       <td class="px-3 py-1 text-slate-300"><div class="truncate max-w-[130px]">${esc(g.bovm)}</div></td>
-      <td class="px-3 py-1.5">
+      <td class="px-3 py-1">
         <div class="flex items-center gap-1.5 flex-wrap">
           <span class="text-slate-200">${esc(g.gfxOperator)}</span>
           <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-800 text-${cColor}-300 border border-slate-700">${esc(g.gfxCompany)}</span>
@@ -384,8 +403,8 @@ function renderGames(){
       </td>
       <td class="px-3 py-1">${statusWidgetHtml('backupClock', bk)}</td>
       <td class="px-3 py-1">${statusWidgetHtml('gfxExample', gx)}</td>
-      <td class="px-3 py-1.5">
-        <textarea rows="1" placeholder="General note…" class="remarks-note w-full bg-[#0b0f19]/70 text-slate-300 text-xs px-2 py-1 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 resize-none">${esc(g.remarks)}</textarea>
+      <td class="px-3 py-1">
+        <input type="text" value="${esc(g.remarks)}" placeholder="General note…" class="remarks-note w-full bg-[#0b0f19]/70 text-slate-300 text-xs px-2 py-1 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 focus:outline-none">
       </td>
     </tr>`;
   });
@@ -396,15 +415,13 @@ function renderGames(){
 function autosize(ta){ ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight)+'px'; }
 
 function wireGameRowEvents(tbody){
-  tbody.querySelectorAll('textarea.remarks-note').forEach(ta=>{
-    autosize(ta);
+  tbody.querySelectorAll('input.remarks-note').forEach(inp=>{
     let timer;
-    ta.addEventListener('input', ()=>{
-      autosize(ta);
+    inp.addEventListener('input', ()=>{
       clearTimeout(timer);
-      timer = setTimeout(()=>{ writeGameField(ta.closest('tr').dataset.id, 'remarks', ta.value); }, 700);
+      timer = setTimeout(()=>{ writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value); }, 700);
     });
-    ta.addEventListener('blur', ()=>{ writeGameField(ta.closest('tr').dataset.id, 'remarks', ta.value); });
+    inp.addEventListener('blur', ()=>{ writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value); });
   });
 
   wireStatusWidgets(tbody);

@@ -98,7 +98,12 @@
 
 <!-- GAMES PANEL -->
 <main class="panel flex-1 overflow-x-auto p-4 max-w-[1920px] w-full mx-auto" id="panel-games">
-  <div class="border border-[#1f2937] rounded-lg overflow-hidden bg-[#111827] shadow-2xl">
+  <div id="emptyWindowBanner" class="hidden border border-dashed border-slate-700 rounded-lg bg-[#111827]/60 py-14 px-6 text-center flex flex-col items-center gap-2">
+    <div class="text-2xl">🗂️</div>
+    <div class="text-base font-bold text-white" id="emptyWindowTitle">No data yet for this window</div>
+    <div class="text-xs text-slate-400 max-w-md">Send the Excel files for this window to Claude and they'll be imported here — the schedule, crew and colours all come from a real import, never typed in by hand.</div>
+  </div>
+  <div id="gamesTableWrap" class="border border-[#1f2937] rounded-lg overflow-hidden bg-[#111827] shadow-2xl">
     <table class="w-full text-left border-collapse">
       <thead class="bg-[#0f172a] text-[11px] uppercase tracking-wider font-semibold text-slate-400 border-b border-[#1f2937]">
         <tr>
