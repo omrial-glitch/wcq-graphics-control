@@ -48,8 +48,10 @@ function renderPalette(){
     const rgb = hexToRgb(hex);
     const rgbText = rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : '—';
     return `
-    <div class="border border-[#2d3a54] rounded-lg overflow-hidden bg-[#0f172a] cursor-pointer" data-hex="${hex}">
-      <div class="h-10" style="background:${hex}"></div>
+    <div class="border border-[#2d3a54] rounded-lg overflow-hidden bg-[#0f172a] cursor-pointer" data-hex="${hex}" title="Click to copy ${hex}">
+      <div class="h-10 relative" style="background:${hex}">
+        <span class="absolute top-1 right-1" style="color:${contrastTextColor(hex)}">${copyIconSvg()}</span>
+      </div>
       <div class="px-2 py-1.5">
         <div class="font-mono text-[11px] text-slate-200">${hex}</div>
         <div class="font-mono text-[10px] text-slate-500">${rgbText}</div>
@@ -107,15 +109,28 @@ function contrastTextColor(hex){
   return luminance > 150 ? '#252525' : '#FFFFFF';
 }
 
+function copyIconSvg(){
+  return `<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.4" style="opacity:.7;flex-shrink:0"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3.5 11V3.5a1 1 0 0 1 1-1H11" stroke-linecap="round"/></svg>`;
+}
+
 function teamStripeHtml(homeCode, homeHex, awayCode, awayHex){
+  const homeRgb = hexToRgb(homeHex), awayRgb = hexToRgb(awayHex);
+  const homeRgbText = homeRgb ? `${homeRgb.r}, ${homeRgb.g}, ${homeRgb.b}` : '—';
+  const awayRgbText = awayRgb ? `${awayRgb.r}, ${awayRgb.g}, ${awayRgb.b}` : '—';
   return `
-  <div class="score-stripe">
-    <div class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}" data-copy="${esc(homeHex)}" title="Copy ${esc(homeCode)}'s colour for this game (${esc(homeHex)})">
-      <span class="stripe-code">${esc(homeCode)}</span>
+  <div class="flex flex-col gap-1 w-full max-w-[280px]">
+    <div class="score-stripe">
+      <div class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}" data-copy="${esc(homeHex)}" title="Copy ${esc(homeCode)}'s colour for this game (${esc(homeHex)})">
+        <span class="stripe-code">${esc(homeCode)}</span>${copyIconSvg()}
+      </div>
+      <div class="stripe-gap"></div>
+      <div class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}" data-copy="${esc(awayHex)}" title="Copy ${esc(awayCode)}'s colour for this game (${esc(awayHex)})">
+        ${copyIconSvg()}<span class="stripe-code">${esc(awayCode)}</span>
+      </div>
     </div>
-    <div class="stripe-gap"></div>
-    <div class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}" data-copy="${esc(awayHex)}" title="Copy ${esc(awayCode)}'s colour for this game (${esc(awayHex)})">
-      <span class="stripe-code">${esc(awayCode)}</span>
+    <div class="flex justify-between gap-2 text-[10px] font-mono text-slate-500 px-0.5">
+      <span>${esc(homeHex.toUpperCase())} · ${homeRgbText}</span>
+      <span>${esc(awayHex.toUpperCase())} · ${awayRgbText}</span>
     </div>
   </div>`;
 }

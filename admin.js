@@ -195,10 +195,9 @@ function init(){
 
   document.addEventListener('click', (e)=>{
     if(e.target.closest('.pick-swatch, .palette-picker, [data-pick-game]')) return;
-    const hadOpenPicker = document.querySelector('.palette-picker') !== null;
+    const closedGamePicker = openGamePicker !== null;
     document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
-    document.querySelectorAll('[data-slot-row], [data-game-slot]').forEach(r=>{ r.dataset.pickerOpen = 'false'; });
-    if(hadOpenPicker) renderPairing();
+    if(closedGamePicker){ openGamePicker = null; renderPairing(); }
   });
 
   document.getElementById('searchInput').addEventListener('input', (e)=>{
@@ -713,19 +712,41 @@ function writeTeamField(code, slot, hex){
 
 /* ---------------- pairing table ---------------- */
 
+let openGamePicker = null; // { gameId, side, el } | null while a per-game colour picker is open
+
 function teamColorPickerHtml(gameId, side, teamCode){
   const t = state.teams[teamCode];
   const options = t ? [['light','Light',t.light], ['dark','Dark',t.dark], ['alternate','Alternate',t.alternate]].filter(o=>o[2]) : [];
-  const anchor = side === 'home' ? 'right-0' : 'left-0';
-  if(!options.length) return `<div class="palette-picker absolute z-20 top-full ${anchor} mt-1 text-[10px] text-slate-500 py-1 px-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl whitespace-nowrap">${teamCode} has no colours defined yet — set them in the Team Colours cards above.</div>`;
+  if(!options.length) return `<div class="palette-picker text-[10px] text-slate-500 py-1 px-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl whitespace-nowrap">${teamCode} has no colours defined yet — set them in the Team Colours cards above.</div>`;
   return `
-  <div class="palette-picker absolute z-20 top-full ${anchor} mt-1 flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl w-max">
+  <div class="palette-picker flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl w-max">
     ${options.map(([slot,label,hex])=>`
       <button type="button" class="flex items-center gap-1.5 px-2 py-1 rounded border border-white/10 bg-[#111827] hover:bg-[#1a2234]" data-pick-apply="${gameId}:${side}:${hex}" title="${hex}">
         <span class="w-4 h-4 rounded border border-white/15" style="background:${hex}"></span>
         <span class="text-[10px] text-slate-300">${label}</span>
       </button>`).join('')}
   </div>`;
+}
+
+// Positions the picker relative to its trigger button using fixed coordinates,
+// so it can never get clipped by the table's own scroll/overflow wrappers, and
+// clamps to the viewport so it never opens partly off-screen.
+function positionGamePicker(el, btn){
+  el.style.position = 'fixed';
+  el.style.zIndex = '9999';
+  el.style.visibility = 'hidden';
+  document.body.appendChild(el);
+  const r = btn.getBoundingClientRect();
+  const ew = el.offsetWidth, eh = el.offsetHeight;
+  let left = r.left;
+  if(left + ew > window.innerWidth - 8) left = window.innerWidth - ew - 8;
+  if(left < 8) left = 8;
+  let top = r.bottom + 4;
+  if(top + eh > window.innerHeight - 8) top = r.top - eh - 4;
+  if(top < 8) top = 8;
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+  el.style.visibility = 'visible';
 }
 
 function contrastTextColor(hex){
@@ -754,32 +775,33 @@ function teamStripeHtml(gameId, homeCode, homeHex, awayCode, awayHex){
 
 function renderPairing(){
   const tbody = document.getElementById('pairingBody');
-  if(tbody.querySelector('[data-picker-open="true"]')) return;
+  if(openGamePicker) return;
   const list = state.games.filter(g=>g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
   if(!list.length){ tbody.innerHTML = `<tr><td colspan="2" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
   tbody.innerHTML = list.map(g=>`
     <tr data-fixture-row="${g.id}">
       <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap align-top">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
-      <td class="py-2 px-3 align-top relative" data-game-slot="${g.id}">${teamStripeHtml(g.id, g.home, g.homeColor.hex, g.away, g.awayColor.hex)}</td>
+      <td class="py-2 px-3 align-top" data-game-slot="${g.id}">${teamStripeHtml(g.id, g.home, g.homeColor.hex, g.away, g.awayColor.hex)}</td>
     </tr>
   `).join('');
 
   tbody.querySelectorAll('[data-pick-game]').forEach(sw=>{
     sw.addEventListener('click', ()=>{
-      const row = sw.closest('[data-game-slot]');
-      document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
-      const wasOpenHere = row.dataset.pickerOpen === 'true';
-      tbody.querySelectorAll('[data-game-slot]').forEach(r=>r.dataset.pickerOpen='false');
-      if(wasOpenHere) return;
       const [gameId, side, teamCode] = sw.dataset.pickGame.split(':');
-      row.insertAdjacentHTML('beforeend', teamColorPickerHtml(gameId, side, teamCode));
-      row.dataset.pickerOpen = 'true';
-      row.querySelectorAll('[data-pick-apply]').forEach(pb=>{
+      const wasOpenHere = openGamePicker && openGamePicker.gameId === gameId && openGamePicker.side === side;
+      if(openGamePicker){ openGamePicker.el.remove(); openGamePicker = null; }
+      if(wasOpenHere){ renderPairing(); return; }
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = teamColorPickerHtml(gameId, side, teamCode);
+      const el = wrapper.firstElementChild;
+      positionGamePicker(el, sw);
+      el.querySelectorAll('[data-pick-apply]').forEach(pb=>{
         pb.addEventListener('click', ()=>{
           const [gid, sd, hex] = pb.dataset.pickApply.split(':');
           writeGameColor(gid, sd, hex);
         });
       });
+      openGamePicker = { gameId, side, el };
     });
   });
 }
