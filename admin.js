@@ -739,14 +739,19 @@ function teamStripeHtml(gameId, homeCode, homeHex, awayCode, awayHex){
   const homeText = contrastTextColor(homeHex);
   const awayText = contrastTextColor(awayHex);
   return `
-  <div class="team-stripe">
-    <button type="button" class="stripe-side stripe-home" style="background:${esc(homeHex)};color:${homeText}" data-pick-game="${gameId}:home:${homeCode}" title="Set ${esc(homeCode)}'s colour for this game only">
-      <span class="stripe-code">${esc(homeCode)}</span>
+  <div class="score-stripe">
+    <div class="stripe-badge" aria-hidden="true"><span class="stripe-badge-ball">🏀</span><span class="stripe-badge-txt">WCQ</span></div>
+    <button type="button" class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${homeText}" data-pick-game="${gameId}:home:${homeCode}" title="Set ${esc(homeCode)}'s colour for this game only">
+      <span class="stripe-code">${esc(homeCode)}</span><span class="stripe-score">00</span>
     </button>
     <div class="stripe-gap"></div>
-    <button type="button" class="stripe-side stripe-away" style="background:${esc(awayHex)};color:${awayText}" data-pick-game="${gameId}:away:${awayCode}" title="Set ${esc(awayCode)}'s colour for this game only">
-      <span class="stripe-code">${esc(awayCode)}</span>
+    <button type="button" class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${awayText}" data-pick-game="${gameId}:away:${awayCode}" title="Set ${esc(awayCode)}'s colour for this game only">
+      <span class="stripe-score">00</span><span class="stripe-code">${esc(awayCode)}</span>
     </button>
+    <div class="stripe-meta" aria-hidden="true">
+      <span class="stripe-q">1ST</span>
+      <span class="stripe-clock">10:00</span>
+    </div>
   </div>`;
 }
 

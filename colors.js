@@ -109,13 +109,18 @@ function contrastTextColor(hex){
 
 function teamStripeHtml(homeCode, homeHex, awayCode, awayHex){
   return `
-  <div class="team-stripe">
-    <div class="stripe-side stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}">
-      <span class="stripe-code">${esc(homeCode)}</span>
+  <div class="score-stripe">
+    <div class="stripe-badge" aria-hidden="true"><span class="stripe-badge-ball">🏀</span><span class="stripe-badge-txt">WCQ</span></div>
+    <div class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}">
+      <span class="stripe-code">${esc(homeCode)}</span><span class="stripe-score">00</span>
     </div>
     <div class="stripe-gap"></div>
-    <div class="stripe-side stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}">
-      <span class="stripe-code">${esc(awayCode)}</span>
+    <div class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}">
+      <span class="stripe-score">00</span><span class="stripe-code">${esc(awayCode)}</span>
+    </div>
+    <div class="stripe-meta" aria-hidden="true">
+      <span class="stripe-q">1ST</span>
+      <span class="stripe-clock">10:00</span>
     </div>
   </div>`;
 }

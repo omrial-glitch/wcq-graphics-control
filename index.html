@@ -38,19 +38,33 @@
         url('fonts/STEPITUP-BoldCondensed.woff') format('woff');
     font-weight:700; font-style:normal; font-display:swap;
   }
-  .team-stripe{
-    display:flex; align-items:stretch; height:36px; border-radius:5px; overflow:hidden;
-    background:#141414; box-shadow:0 1px 3px rgba(0,0,0,.45); width:100%; max-width:280px;
+  .score-stripe{
+    display:flex; align-items:stretch; height:38px; border-radius:5px; overflow:hidden;
+    background:#141414; box-shadow:0 1px 3px rgba(0,0,0,.45); width:100%; max-width:400px;
+    font-family:'Stepitup Condensed', Arial, sans-serif;
   }
-  .stripe-side{
-    flex:1 1 0; min-width:0; display:flex; align-items:center; position:relative;
-    font-family:'Stepitup Condensed', Arial, sans-serif; cursor:default;
+  .stripe-badge{
+    flex:0 0 38px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:#1c1710; gap:1px;
   }
-  button.stripe-side{ border:none; cursor:pointer; }
-  .stripe-home{ justify-content:flex-start; padding-left:10px; clip-path:polygon(0 0,90% 0,100% 100%,0 100%); }
-  .stripe-away{ justify-content:flex-end; padding-right:10px; clip-path:polygon(10% 0,100% 0,100% 100%,0 100%); }
-  .stripe-gap{ width:12px; background:#141414; flex-shrink:0; }
-  .stripe-code{ font-size:14px; letter-spacing:.02em; text-transform:uppercase; line-height:1; white-space:nowrap; }
+  .stripe-badge-ball{ font-size:12px; line-height:1; }
+  .stripe-badge-txt{ font-size:8px; font-weight:700; letter-spacing:.05em; color:#caa457; line-height:1; font-family:Arial,sans-serif; }
+  .stripe-team{
+    flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:space-between;
+    gap:4px; padding:0 8px; border:0; background:none; cursor:default;
+  }
+  button.stripe-team{ cursor:pointer; }
+  .stripe-home{ clip-path:polygon(0 0,92% 0,100% 100%,0 100%); padding-right:16px; }
+  .stripe-away{ clip-path:polygon(8% 0,100% 0,100% 100%,0 100%); padding-left:16px; }
+  .stripe-gap{ width:3px; background:#141414; flex-shrink:0; }
+  .stripe-code{ font-size:12px; letter-spacing:.02em; text-transform:uppercase; line-height:1; white-space:nowrap; }
+  .stripe-score{ font-size:16px; font-weight:700; line-height:1; white-space:nowrap; }
+  .stripe-meta{
+    flex:0 0 64px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:#141414; color:#e5e7eb; gap:1px;
+  }
+  .stripe-meta .stripe-q{ font-size:9px; font-weight:700; letter-spacing:.05em; color:#9ca3af; font-family:Arial,sans-serif; }
+  .stripe-meta .stripe-clock{ font-size:12px; font-weight:600; color:#f1f5f9; font-family:ui-monospace,monospace; }
 </style>
 </head>
 <body class="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
