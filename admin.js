@@ -726,18 +726,38 @@ function teamColorPickerHtml(gameId, side, teamCode){
   </div>`;
 }
 
+function contrastTextColor(hex){
+  if(!hex) return '#FFFFFF';
+  const h = hex.replace('#','');
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  if([r,g,b].some(isNaN)) return '#FFFFFF';
+  const luminance = 0.299*r + 0.587*g + 0.114*b;
+  return luminance > 150 ? '#252525' : '#FFFFFF';
+}
+
+function teamStripeHtml(gameId, homeCode, homeHex, awayCode, awayHex){
+  const homeText = contrastTextColor(homeHex);
+  const awayText = contrastTextColor(awayHex);
+  return `
+  <div class="team-stripe">
+    <button type="button" class="stripe-side stripe-home" style="background:${esc(homeHex)};color:${homeText}" data-pick-game="${gameId}:home:${homeCode}" title="Set ${esc(homeCode)}'s colour for this game only">
+      <span class="stripe-code">${esc(homeCode)}</span>
+    </button>
+    <div class="stripe-gap"></div>
+    <button type="button" class="stripe-side stripe-away" style="background:${esc(awayHex)};color:${awayText}" data-pick-game="${gameId}:away:${awayCode}" title="Set ${esc(awayCode)}'s colour for this game only">
+      <span class="stripe-code">${esc(awayCode)}</span>
+    </button>
+  </div>`;
+}
+
 function renderPairing(){
   const tbody = document.getElementById('pairingBody');
   const list = state.games.filter(g=>g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
-  if(!list.length){ tbody.innerHTML = `<tr><td colspan="4" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
-  const swatchBtn = (gameId, side, code, hex) =>
-    `<button type="button" class="pick-swatch w-5 h-5 rounded border border-white/15" style="background:${esc(hex)}" data-pick-game="${gameId}:${side}:${code}" title="Set ${esc(code)}'s colour for this game only"></button>`;
+  if(!list.length){ tbody.innerHTML = `<tr><td colspan="2" class="text-center text-slate-500 py-6">No fixtures for this confederation yet</td></tr>`; return; }
   tbody.innerHTML = list.map(g=>`
     <tr data-fixture-row="${g.id}">
       <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap align-top">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
-      <td class="py-2 px-3 text-right align-top relative" data-game-slot="${g.id}:home"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span>${swatchBtn(g.id, 'home', g.home, g.homeColor.hex)}</span></td>
-      <td class="py-2 px-2 text-center text-slate-600 w-8 align-top">–</td>
-      <td class="py-2 px-3 align-top relative" data-game-slot="${g.id}:away"><span class="inline-flex items-center gap-2">${swatchBtn(g.id, 'away', g.away, g.awayColor.hex)}<span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
+      <td class="py-2 px-3 align-top relative" data-game-slot="${g.id}">${teamStripeHtml(g.id, g.home, g.homeColor.hex, g.away, g.awayColor.hex)}</td>
     </tr>
   `).join('');
 

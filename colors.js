@@ -98,13 +98,33 @@ function teamCardHtml(t){
     </div>`;
 }
 
+function contrastTextColor(hex){
+  if(!hex) return '#FFFFFF';
+  const h = hex.replace('#','');
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  if([r,g,b].some(isNaN)) return '#FFFFFF';
+  const luminance = 0.299*r + 0.587*g + 0.114*b;
+  return luminance > 150 ? '#252525' : '#FFFFFF';
+}
+
+function teamStripeHtml(homeCode, homeHex, awayCode, awayHex){
+  return `
+  <div class="team-stripe">
+    <div class="stripe-side stripe-home" style="background:${esc(homeHex)};color:${contrastTextColor(homeHex)}">
+      <span class="stripe-code">${esc(homeCode)}</span>
+    </div>
+    <div class="stripe-gap"></div>
+    <div class="stripe-side stripe-away" style="background:${esc(awayHex)};color:${contrastTextColor(awayHex)}">
+      <span class="stripe-code">${esc(awayCode)}</span>
+    </div>
+  </div>`;
+}
+
 function pairingRowHtml(g){
   return `
     <tr style="border-left:3px solid #${ZONE_HEX[g.continent]||'475569'}">
-      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${esc(g.dateShort)}</td>
-      <td class="py-2 px-3 text-right"><span class="inline-flex items-center justify-end gap-2"><span class="font-semibold text-slate-100">${esc(g.home)}</span><span class="w-5 h-5 rounded border border-white/15" style="background:${esc(g.homeColor)}"></span></span></td>
-      <td class="py-2 px-2 text-center text-slate-600 w-8">–</td>
-      <td class="py-2 px-3"><span class="inline-flex items-center gap-2"><span class="w-5 h-5 rounded border border-white/15" style="background:${esc(g.awayColor)}"></span><span class="font-semibold text-slate-100">${esc(g.away)}</span></span></td>
+      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap align-top">${esc(g.dateShort)}</td>
+      <td class="py-2 px-3 align-top">${teamStripeHtml(g.home, g.homeColor, g.away, g.awayColor)}</td>
     </tr>`;
 }
 
