@@ -206,6 +206,7 @@ function init(){
   });
 
   document.getElementById('refreshBtn').addEventListener('click', loadWindow);
+  document.getElementById('exportBtn').addEventListener('click', exportToExcel);
 
   document.getElementById('addColorForm').addEventListener('submit', (e)=>{
     e.preventDefault();
@@ -870,6 +871,268 @@ async function importSeedData(windowId){
 
   batches.push(batch);
   for(const b of batches) await b.commit();
+}
+
+/* ---------------- Excel export ---------------- */
+/* Produces a workbook shaped like the production team's own "Timing and
+   follow-up" tracker: one boxed table per broadcast date, rows tinted by
+   confederation, a live GMT->Madrid time formula, and green/red flags on
+   the same fields the Game Schedule tab tracks. */
+
+const XL_HEADER_FONT = { name:'DAZN Oscine XBold', size:14, bold:true };
+const XL_DATE_FONT = { name:'DAZN Trim', size:18, bold:true };
+const XL_FONT_WIDE = { name:'Aptos', size:11 };
+const XL_FONT_NARROW = { name:'Aptos Narrow', size:11 };
+const XL_GREEN = 'FF00B050';
+const XL_RED = 'FFFF0000';
+const XL_WHITE = 'FFFFFFFF';
+const XL_CONT_FILL = { Africa:'FFB4E5A2', Europe:'FF83CBEB', America:'FFF6C6AD', Asia:'FFFFFF99' };
+const XL_DEFAULT_FILL = 'FFD9D9D9';
+const XL_GAMES_COLUMNS = [
+  ['Home',8.43],['Away',7.86],['Venue',39.71],['City',18.29],['GMT',7.43],['ESP Time',7.29],
+  ['BOVM',21.43],['GFX operator',26.86],['BKP CLOCK',16.43],['GFX EXAMPLES',14.43],
+  ['Technical power',13.43],['Additional Remarks',49.0],
+];
+
+function xlStatus(status){ return status==='ok' ? 'ok' : status==='issue' ? 'NO' : ''; }
+
+function xlBorder(top, bottom, colIdx, nCols, header){
+  const thin = { style:'thin' }, med = { style:'medium' };
+  return {
+    top: (header||top) ? med : thin,
+    bottom: (header||bottom) ? med : thin,
+    left: colIdx===1 ? med : thin,
+    right: colIdx===nCols ? med : thin,
+  };
+}
+
+function xlAddCF(ws, ref, text, colorArgb, fontArgb, priority){
+  const style = { fill: { type:'pattern', pattern:'solid', bgColor:{argb:colorArgb} } };
+  if(fontArgb) style.font = { color:{argb:fontArgb} };
+  ws.addConditionalFormatting({ ref, rules: [{ type:'cellIs', operator:'equal', formulae:[`"${text}"`], style, priority }] });
+}
+
+function buildGamesSheet(wb, sheetName, games){
+  const ws = wb.addWorksheet(sheetName, { views: [{ state:'frozen', ySplit:2, showGridLines:false }] });
+  XL_GAMES_COLUMNS.forEach((c,i)=>{ ws.getColumn(i+1).width = c[1]; });
+
+  // Group by calendar date first (dateISO), THEN sort within the group by
+  // sortKey — never sort the whole list first and group by "did dateISO
+  // change from the previous row", since a stray ordering quirk in the
+  // sortKey values could split one date's games into two disjoint blocks.
+  const byDate = new Map();
+  games.forEach(g=>{
+    if(!byDate.has(g.dateISO)) byDate.set(g.dateISO, { label: g.dateLabel, games: [] });
+    byDate.get(g.dateISO).games.push(g);
+  });
+  const groups = Array.from(byDate.keys()).sort().map(iso=>{
+    const entry = byDate.get(iso);
+    const sortedGames = entry.games.slice().sort((a,b)=> a.sortKey - b.sortKey);
+    return [entry.label, sortedGames];
+  });
+
+  let row = 1;
+  groups.forEach(([dateLabel, groupGames], gi)=>{
+    if(gi>0) row += 2; // blank spacer rows between broadcast dates
+
+    ws.mergeCells(row,1,row,8);
+    const dcell = ws.getCell(row,1);
+    dcell.value = dateLabel;
+    dcell.font = XL_DATE_FONT;
+    dcell.alignment = { horizontal:'center', vertical:'middle' };
+    ws.getRow(row).height = 21.95;
+    row++;
+
+    const headerRow = row;
+    XL_GAMES_COLUMNS.forEach((c,i)=>{
+      const cell = ws.getCell(headerRow, i+1);
+      cell.value = c[0];
+      cell.font = XL_HEADER_FONT;
+      cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+      cell.border = xlBorder(true, true, i+1, XL_GAMES_COLUMNS.length, true);
+    });
+    ws.getRow(headerRow).height = 47.1;
+    row++;
+
+    const firstDataRow = row;
+    groupGames.forEach((g, idx)=>{
+      const isTop = idx===0, isBottom = idx===groupGames.length-1;
+      const fillArgb = XL_CONT_FILL[g.continent] || XL_DEFAULT_FILL;
+      let remarks = g.remarks || '';
+      if(g.espNextDay) remarks = ('ESP time is +1 day. ' + remarks).trim();
+
+      const values = [
+        g.home, g.away, g.venue, g.city, null, null, g.bovm, g.gfxOperator,
+        xlStatus(g.backupClock && g.backupClock.status),
+        xlStatus(g.gfxExample && g.gfxExample.status),
+        g.technicalPower || '', remarks,
+      ];
+      values.forEach((v,i)=>{
+        const cell = ws.getCell(row, i+1);
+        if(i!==4 && i!==5) cell.value = v;
+        cell.font = i<6 ? XL_FONT_WIDE : XL_FONT_NARROW;
+        cell.alignment = { horizontal:'center', vertical:'middle', wrapText: i===11 };
+        cell.border = xlBorder(isTop, isBottom, i+1, XL_GAMES_COLUMNS.length, false);
+        cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb: fillArgb} };
+      });
+
+      const [hh, mm] = (g.gmtTime || '0:0').split(':').map(Number);
+      const gmtCell = ws.getCell(row,5);
+      // UTC constructor: Excel's serial-date math is timezone-agnostic, and
+      // for a date this old (1899, the usual "day zero" for time-only
+      // cells) the local constructor picks up the host's historical zone
+      // offset (some are not even whole hours), corrupting the displayed
+      // time. Date.UTC sidesteps that entirely.
+      gmtCell.value = new Date(Date.UTC(1899,11,30,hh||0,mm||0));
+      gmtCell.numFmt = 'h:mm';
+      const espCell = ws.getCell(row,6);
+      espCell.value = { formula: `E${row} + TIME(2,0,0)` };
+      espCell.numFmt = 'h:mm';
+
+      row++;
+    });
+    ws.getRow(firstDataRow).height = 15.95;
+  });
+
+  const lastRow = Math.max(row - 1, 1);
+  xlAddCF(ws, `I1:J${lastRow}`, 'OK', XL_GREEN, null, 1);
+  xlAddCF(ws, `I1:J${lastRow}`, 'NO', XL_RED, XL_WHITE, 2);
+  xlAddCF(ws, `K1:K${lastRow}`, 'yes', XL_GREEN, null, 3);
+  xlAddCF(ws, `K1:K${lastRow}`, 'no', XL_RED, XL_WHITE, 4);
+  return ws;
+}
+
+function buildRosterSheet(wb, sheetName, games, roleKey, companyKey){
+  const ws = wb.addWorksheet(sheetName);
+  const roleHeader = sheetName.replace(/s$/,'') + ' ';
+  const headers = companyKey
+    ? ['Country','City','Company', roleHeader, 'Email','Telephone']
+    : ['Country','City', sheetName, 'Email','Telephone'];
+  headers.forEach((h,i)=>{
+    const cell = ws.getCell(1,i+1);
+    cell.value = h;
+    cell.font = XL_HEADER_FONT;
+    cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    cell.border = { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} };
+  });
+
+  const seen = new Map();
+  games.forEach(g=>{
+    const key = g.city + '|' + g[roleKey];
+    if(seen.has(key)) return;
+    const country = g.homeName || g.home;
+    const rowVals = [country, g.city];
+    if(companyKey) rowVals.push(g[companyKey] || '');
+    rowVals.push(g[roleKey] || '', '', '');
+    seen.set(key, rowVals);
+  });
+
+  let r = 2;
+  seen.forEach(rowVals=>{
+    rowVals.forEach((v,i)=>{
+      const cell = ws.getCell(r,i+1);
+      cell.value = v;
+      cell.font = XL_FONT_WIDE;
+      cell.alignment = { horizontal:'left', vertical:'middle' };
+      cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+    });
+    r++;
+  });
+
+  const widths = companyKey ? [22.43,22.14,33.71,20.14,24,18] : [22.43,22.14,31.43,20.14,24,18];
+  widths.slice(0, headers.length).forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+  return ws;
+}
+
+function buildTechnicalPowerSheet(wb, games){
+  const ws = wb.addWorksheet('Technical power');
+  ['Country','Venue','Technical Power'].forEach((h,i)=>{
+    const cell = ws.getCell(1,i+1);
+    cell.value = h;
+    cell.font = XL_HEADER_FONT;
+    cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    cell.border = { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} };
+  });
+  ws.getRow(1).height = 30;
+
+  const seen = new Map();
+  games.forEach(g=>{
+    if(seen.has(g.venue)) return;
+    seen.set(g.venue, [g.homeName || g.home, g.venue, g.technicalPower || '']);
+  });
+
+  let r = 2;
+  seen.forEach(rowVals=>{
+    rowVals.forEach((v,i)=>{
+      const cell = ws.getCell(r,i+1);
+      cell.value = v;
+      cell.font = XL_FONT_WIDE;
+      cell.alignment = { horizontal:'left', vertical:'middle' };
+      cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+    });
+    r++;
+  });
+
+  const lastRow = Math.max(r - 1, 2);
+  xlAddCF(ws, `C2:C${lastRow}`, 'yes', XL_GREEN, null, 1);
+  xlAddCF(ws, `C2:C${lastRow}`, 'no', XL_RED, XL_WHITE, 2);
+  ws.getColumn(1).width = 22;
+  ws.getColumn(2).width = 37.71;
+  ws.getColumn(3).width = 15;
+  return ws;
+}
+
+async function buildWindowWorkbookBlob(){
+  const games = state.games;
+  const label = state.windowId.toUpperCase();
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'WCQ Graphics Control';
+  wb.created = new Date();
+  wb.calcProperties.fullCalcOnLoad = true;
+
+  buildGamesSheet(wb, `Games ${label}`, games);
+  buildRosterSheet(wb, 'GFX Operators', games, 'gfxOperator', 'gfxCompany');
+  buildRosterSheet(wb, 'BOVM', games, 'bovm', null);
+  buildTechnicalPowerSheet(wb, games);
+
+  const buf = await wb.xlsx.writeBuffer();
+  return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+async function exportToExcel(){
+  const btn = document.getElementById('exportBtn');
+  if(btn.disabled) return;
+
+  if(!state.games.length){
+    showToast('No games to export yet.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.querySelector('.export-icon').classList.add('hidden');
+  btn.querySelector('.export-spinner').classList.remove('hidden');
+
+  try{
+    const blob = await buildWindowWorkbookBlob();
+    const filename = `WCQ-${state.windowId.toUpperCase()}-Timing-and-follow-up.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=> URL.revokeObjectURL(url), 4000);
+    showToast(`Downloaded ${filename}`, 'ok');
+  }catch(err){
+    console.error('export failed', err);
+    showToast('Export failed — check the console.', 'error');
+  }finally{
+    btn.disabled = false;
+    btn.querySelector('.export-icon').classList.remove('hidden');
+    btn.querySelector('.export-spinner').classList.add('hidden');
+  }
 }
 
 init();
