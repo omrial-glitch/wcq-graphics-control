@@ -455,10 +455,20 @@ function renderGames(){
   }
   let html = '';
   let lastDate = null;
+  const perDate = {};
+  list.forEach(g=>{ perDate[g.dateISO] = (perDate[g.dateISO]||0) + 1; });
   list.forEach(g=>{
     if(g.dateISO !== lastDate){
+      // A gap in the page background plus a heavier header makes each new day obvious.
+      if(lastDate !== null) html += `<tr aria-hidden="true"><td colspan="9" class="h-4 p-0 bg-[#0b0f19]"></td></tr>`;
       lastDate = g.dateISO;
-      html += `<tr class="bg-[#0f172a]"><td colspan="9" class="py-1.5 px-3 text-[12px] font-bold uppercase tracking-wide text-slate-300">${esc(g.dateLabel)}</td></tr>`;
+      const n = perDate[g.dateISO];
+      html += `<tr class="bg-[#1a2540]" style="border-top:2px solid #3b82f6"><td colspan="9" class="py-2.5 px-3">
+        <span class="inline-flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide text-white">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg>
+          ${esc(g.dateLabel)}
+          <span class="text-[11px] font-semibold normal-case tracking-normal text-slate-400">· ${n} game${n===1?'':'s'}</span>
+        </span></td></tr>`;
     }
     const bk = g.backupClock || {status:'pending',note:''};
     const gx = g.gfxExample || {status:'pending',note:''};
