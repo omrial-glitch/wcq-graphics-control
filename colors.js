@@ -9,6 +9,8 @@ const SEED_PAIRINGS = [{"dateShort":"August 27","home":"PAN","away":"CAN","homeC
 const CONT_ORDER = ["Africa", "America", "Asia", "Europe"];
 const CONT_LABEL = { Africa: "Africa", America: "Americas", Asia: "Asia", Europe: "Europe" };
 const ZONE_HEX = { Africa: "4ade80", America: "f87171", Asia: "facc15", Europe: "60a5fa" };
+// FIBA team code -> ISO 3166 alpha-2, for the flag images next to each team name.
+const FLAG_ISO = { ANG: "ao", CMR: "cm", CPV: "cv", COD: "cd", CIV: "ci", EGY: "eg", GUI: "gn", MLI: "ml", NGR: "ng", SEN: "sn", SSD: "ss", TUN: "tn", ARG: "ar", BAH: "bs", BRA: "br", CAN: "ca", CHI: "cl", COL: "co", DOM: "do", MEX: "mx", PAN: "pa", PUR: "pr", URU: "uy", USA: "us", AUS: "au", CHN: "cn", IRI: "ir", JPN: "jp", JOR: "jo", KOR: "kr", LBN: "lb", NZL: "nz", PHI: "ph", QAT: "qa", KSA: "sa", SYR: "sy", BIH: "ba", CRO: "hr", EST: "ee", FIN: "fi", FRA: "fr", GEO: "ge", GER: "de", GRE: "gr", HUN: "hu", ISL: "is", ISR: "il", ITA: "it", LAT: "lv", LTU: "lt", MNE: "me", NED: "nl", POL: "pl", POR: "pt", SRB: "rs", SLO: "si", ESP: "es", SWE: "se", TUR: "tr", UKR: "ua" };
 
 let TEAMS = SEED_TEAMS;
 let PALETTE = SEED_PALETTE;
@@ -73,7 +75,7 @@ function slotRow(label, hex){
     <div class="flex-1 min-w-0 flex flex-col gap-0.5">
       <span class="text-[10px] uppercase tracking-wide text-slate-500">${label}</span>
       <div class="flex items-center gap-2 flex-wrap">
-        <span class="font-mono text-[11px] text-slate-200 font-medium">${hex.toUpperCase()}</span>
+        <span class="bg-[#0b0f19] border border-[#2d3a54] rounded px-1.5 py-0.5 text-[11px] font-mono w-24 text-slate-200">${hex.toUpperCase()}</span>
         <span class="font-mono text-[10px] text-slate-500">${rgbText}</span>
         <button type="button" class="text-[10px] text-slate-500 hover:text-slate-300 border border-[#2d3a54] rounded px-1.5 py-0.5" data-copy="${hex}">Copy</button>
       </div>
@@ -90,10 +92,16 @@ function pairingMatches(g){
   return (g.home + ' ' + g.away).toLowerCase().includes(search);
 }
 
+function flagImgHtml(code){
+  const iso = FLAG_ISO[code];
+  if(!iso) return '';
+  return `<img src="https://flagcdn.com/w80/${iso}.png" alt="" loading="lazy" class="w-7 h-[18px] object-cover rounded-[3px] ring-1 ring-white/15 flex-shrink-0">`;
+}
+
 function teamCardHtml(t){
   return `
     <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
-      <div class="flex justify-between items-baseline"><span class="font-semibold text-sm text-white">${esc(t.name)}</span><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
+      <div class="flex justify-between items-center gap-2"><div class="flex items-center gap-2.5 min-w-0">${flagImgHtml(t.code)}<span class="font-bold text-lg leading-tight text-white">${esc(t.name)}</span></div><span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span></div>
       ${slotRow('Light', t.light)}
       ${slotRow('Dark', t.dark)}
       ${slotRow('Alternate', t.alternate)}
@@ -180,7 +188,7 @@ function renderTeams(){
             <span class="w-2.5 h-2.5 rounded-full" style="background:#${hex}"></span>
             <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wide">${CONT_LABEL[c]}</h4>
           </div>
-          <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2.5">${list.map(teamCardHtml).join('')}</div>
+          <div class="flex flex-col gap-2.5">${list.map(teamCardHtml).join('')}</div>
         </div>`;
       }).join('');
     }
@@ -190,7 +198,7 @@ function renderTeams(){
     fixTitle.textContent = `${CONT_LABEL[activeContinent]} Fixtures`;
     const list = Object.values(TEAMS).filter(t=>t.continent===activeContinent).sort((a,b)=>a.name.localeCompare(b.name));
     wrap.innerHTML = list.length
-      ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">${list.map(teamCardHtml).join('')}</div>`
+      ? `<div class="flex flex-col gap-2.5">${list.map(teamCardHtml).join('')}</div>`
       : `<div class="text-slate-500 text-sm py-8 text-center">No teams for this confederation yet.</div>`;
   }
   wrap.querySelectorAll('[data-copy]').forEach(b=>{

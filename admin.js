@@ -630,7 +630,8 @@ function palettePickerHtml(teamCode, slot){
 
 function renderTeamColors(){
   const wrap = document.getElementById('teamsByContinent');
-  if(wrap.contains(document.activeElement)) return; // don't yank focus while editing a hex field
+  const active = document.activeElement;
+  if(active && active.matches('input[data-team]') && wrap.contains(active)) return; // don't yank focus while typing a hex code
   const teams = state.teams;
   document.getElementById('colorsColTitle').textContent = `Team Colours — ${CONT_LABEL[state.colorContinent]}`;
   document.getElementById('fixturesColTitle').textContent = `${CONT_LABEL[state.colorContinent]} Fixtures`;
@@ -666,6 +667,7 @@ function renderTeamColors(){
       if(!v) return;
       if(!isValidHex(v)){ inp.classList.add('border-rose-500'); return; }
       inp.classList.remove('border-rose-500');
+      inp.blur(); // let the card re-render with the saved value
       writeTeamField(inp.dataset.team, inp.dataset.slot, normHex(v));
     });
   });
@@ -811,6 +813,8 @@ function writeGameColor(gameId, side, hex){
   const g = state.games.find(x=>x.id===gameId);
   const field = side === 'home' ? 'homeColor' : 'awayColor';
   if(g) g[field] = { hex, slot: 'custom' };
+  // Close the picker first — renderPairing() is a no-op while one is open.
+  if(openGamePicker){ openGamePicker.el.remove(); openGamePicker = null; }
   renderGames(); renderPairing();
   if(!state.isAdmin) return;
   db.doc(`windows/${state.windowId}/games/${gameId}`).update({ [field]: { hex, slot: 'custom' } })
