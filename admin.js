@@ -1,0 +1,1393 @@
+// madridOffset = Madrid's hours ahead of GMT during the window (2 in summer / CEST, 1 in winter / CET).
+const WINDOWS = [
+  { id: 'w4', label: 'Window 4 — Aug 27–31, 2026', madridOffset: 2 },
+  { id: 'w5', label: 'Window 5 — Nov 26–30, 2026', madridOffset: 1 },
+];
+const CONT_ORDER = ["Africa", "America", "Asia", "Europe"];
+const CONT_LABEL = { Africa: "Africa", America: "Americas", Asia: "Asia", Europe: "Europe" };
+const ZONE_ABBR = { Africa: "AFR", America: "AMR", Asia: "ASI", Europe: "EUR" };
+const ZONE_HEX = { Africa: "4ade80", America: "f87171", Asia: "facc15", Europe: "60a5fa" };
+const COMPANY_COLOR = {
+  'Wtvision': 'cyan', 'Wtvision - Remote': 'cyan',
+  'TAF': 'violet', 'TV Graphics': 'blue', 'Segev- Remote': 'amber', 'Segev - Remote': 'amber', 'FIBA Americas': 'emerald',
+};
+const state = {
+  windowId: 'w5', tab: 'games', zone: 'all', search: '', colorContinent: 'Africa',
+  games: [], teams: {}, palette: [],
+  isAdmin: false, lastSync: null,
+  operators: null, operatorsMeta: null, operatorsError: '', operatorsWarnings: [], operatorCompany: 'all',
+};
+
+let auth, db;
+let unsubGames = null, unsubTeams = null, unsubPalette = null, unsubOperators = null;
+
+function esc(s){
+  if(s===undefined||s===null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function hexToRgb(hex){
+  if(!hex) return null;
+  const h = hex.replace('#','');
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  if([r,g,b].some(isNaN)) return null;
+  return {r,g,b};
+}
+function isValidHex(h){ return /^#?[0-9a-fA-F]{6}$/.test(h); }
+function normHex(h){ h = h.trim(); if(!h.startsWith('#')) h = '#'+h; return h.toUpperCase(); }
+function companyColor(c){ return COMPANY_COLOR[c] || 'slate'; }
+
+function copyText(text, btnEl){
+  const done = () => {
+    if(!btnEl) return;
+    const prev = btnEl.textContent;
+    btnEl.textContent = "Copied";
+    setTimeout(()=>{ btnEl.textContent = prev; }, 1200);
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>{});
+  } else {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+    ta.select(); try{ document.execCommand('copy'); done(); }catch(e){} document.body.removeChild(ta);
+  }
+}
+
+/* ---------------- backend ---------------- */
+
+function initFirebase(){
+  firebase.initializeApp(FIREBASE_CONFIG);
+  auth = firebase.auth();
+  db = firebase.firestore();
+}
+
+function setConnNote(msg){
+  const el = document.getElementById('connNote');
+  if(!msg){ el.classList.add('hidden'); el.textContent=''; return; }
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function setLiveBadge(mode){
+  const el = document.getElementById('liveBadge');
+  if(mode === 'live'){
+    el.textContent = 'LIVE';
+    el.className = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse';
+  } else if(mode === 'connecting'){
+    el.textContent = 'CONNECTING…';
+    el.className = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse';
+  } else {
+    el.textContent = 'OFFLINE';
+    el.className = 'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-600/20 text-slate-400 border border-slate-600/30';
+  }
+}
+
+function showToast(msg, kind){
+  const stack = document.getElementById('toastStack');
+  const el = document.createElement('div');
+  const styles = {
+    ok: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200',
+    error: 'bg-rose-500/15 border-rose-500/40 text-rose-200',
+    info: 'bg-slate-700/40 border-slate-600/40 text-slate-200',
+  };
+  el.className = `px-3 py-2 rounded-lg border text-xs font-medium shadow-lg max-w-[280px] ${styles[kind] || styles.info}`;
+  el.textContent = msg;
+  stack.appendChild(el);
+  setTimeout(()=>{ el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(()=>el.remove(), 300); }, 4000);
+}
+
+function detachListeners(){
+  if(unsubGames){ unsubGames(); unsubGames = null; }
+  if(unsubTeams){ unsubTeams(); unsubTeams = null; }
+  if(unsubPalette){ unsubPalette(); unsubPalette = null; }
+  if(unsubOperators){ unsubOperators(); unsubOperators = null; }
+}
+
+function attachListeners(windowId){
+  detachListeners();
+  state.games = []; state.teams = {}; state.palette = [];
+  setLiveBadge('connecting');
+  setConnNote('');
+  renderAll();
+
+  unsubGames = db.collection(`windows/${windowId}/games`).onSnapshot(snap=>{
+    state.games = snap.docs.map(d=>Object.assign({ id: d.id }, d.data()));
+    setLiveBadge('live'); setConnNote(''); state.lastSync = new Date();
+    renderAll();
+  }, err=>{
+    console.error(err);
+    setConnNote('Could not read the schedule: ' + err.message);
+    setLiveBadge('offline');
+  });
+
+  unsubTeams = db.collection(`windows/${windowId}/teams`).onSnapshot(snap=>{
+    const t = {};
+    snap.docs.forEach(d=>{ t[d.id] = Object.assign({ code: d.id }, d.data()); });
+    state.teams = t;
+    renderAll();
+  }, err=>console.error(err));
+
+  unsubPalette = db.collection('palette').onSnapshot(snap=>{
+    state.palette = snap.docs.map(d=>d.data().hex);
+    renderAll();
+  }, err=>console.error(err));
+
+  state.operators = null; state.operatorsMeta = null; state.operatorsError = ''; state.operatorsWarnings = [];
+  unsubOperators = db.doc(contactsPath(windowId)).onSnapshot(doc=>{
+    const d = doc.exists ? doc.data() : null;
+    state.operators = d ? (d.operators || []) : [];
+    state.operatorsMeta = d ? { source: d.source, importedAt: d.importedAt } : null;
+    state.operatorsError = '';
+    renderOperators();
+  }, err=>{ console.error(err); state.operatorsError = err.message; renderOperators(); });
+}
+
+function updateAuthUI(){
+  document.getElementById('settingsSignOut').classList.toggle('hidden', !state.isAdmin);
+  document.getElementById('settingsSave').textContent = state.isAdmin ? 'Signed in' : 'Sign in';
+  document.getElementById('authModalTitle').textContent = state.isAdmin ? 'Signed in' : 'Sign in';
+  document.getElementById('authModalLede').textContent = state.isAdmin
+    ? `Signed in as ${auth.currentUser.email}.`
+    : 'Sign in with the admin account to view and edit the schedule.';
+}
+
+function loadWindow(){
+  if(!state.isAdmin){
+    state.games = []; state.teams = {}; state.palette = [];
+    setLiveBadge('offline');
+    setConnNote('Sign in (gear icon) to view and edit the schedule.');
+    renderAll();
+    return;
+  }
+  attachListeners(state.windowId);
+}
+
+
+function startClock(){
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const zoneFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Madrid', timeZoneName: 'short' });
+  function tick(){
+    document.getElementById('madridClock').textContent = fmt.format(new Date());
+    const parts = zoneFmt.formatToParts(new Date());
+    const tzPart = parts.find(p=>p.type==='timeZoneName');
+    document.getElementById('madridZoneLabel').textContent = tzPart ? `(${tzPart.value})` : '(Madrid)';
+  }
+  tick();
+  setInterval(tick, 1000);
+  setInterval(refreshDue, 60000);
+}
+
+/* ---------------- init ---------------- */
+
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    const active = b.dataset.tab === name;
+    b.classList.toggle('text-blue-400', active);
+    b.classList.toggle('border-blue-500', active);
+    b.classList.toggle('text-slate-400', !active);
+    b.classList.toggle('border-transparent', !active);
+  });
+  document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
+  document.getElementById('panel-'+name).classList.remove('hidden');
+  state.tab = name;
+}
+
+function init(){
+  initFirebase();
+
+  const winSel = document.getElementById('windowSelect');
+  WINDOWS.forEach(w=>{
+    const opt = document.createElement('option');
+    opt.value = w.id; opt.textContent = w.label;
+    winSel.appendChild(opt);
+  });
+  winSel.value = state.windowId;
+  winSel.addEventListener('change', () => { state.windowId = winSel.value; loadWindow(); });
+
+  document.querySelectorAll('.tab-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=> switchTab(btn.dataset.tab));
+  });
+  document.getElementById('backToScheduleBtn').addEventListener('click', ()=> switchTab('games'));
+
+  document.addEventListener('click', (e)=>{
+    if(e.target.closest('.pick-swatch, .palette-picker, [data-pick-game]')) return;
+    const closedGamePicker = openGamePicker !== null;
+    document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
+    if(closedGamePicker){ openGamePicker = null; renderPairing(); }
+  });
+
+  document.getElementById('searchInput').addEventListener('input', (e)=>{
+    state.search = e.target.value.trim().toLowerCase();
+    renderGames();
+    renderTeamColors();
+    renderPairing();
+    renderOperators();
+  });
+
+  document.getElementById('operatorsFile').addEventListener('change', importFromPlan);
+  document.getElementById('crewFile').addEventListener('change', importFromPlan);
+
+  document.getElementById('refreshBtn').addEventListener('click', loadWindow);
+  document.getElementById('exportBtn').addEventListener('click', exportToExcel);
+
+  document.getElementById('addColorForm').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const input = document.getElementById('newColorHex');
+    const v = input.value.trim();
+    if(!isValidHex(v)) { input.classList.add('border-rose-500'); return; }
+    input.classList.remove('border-rose-500');
+    const hex = normHex(v);
+    if(!state.palette.includes(hex)) state.palette.push(hex);
+    renderPalette();
+    input.value = '';
+    if(state.isAdmin) db.collection('palette').doc(hex.replace('#','')).set({ hex })
+      .catch(e=>{ console.error(e); showToast('Could not save colour.', 'error'); });
+  });
+
+  document.getElementById('addTeamForm').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const codeInput = document.getElementById('newTeamCode');
+    const nameInput = document.getElementById('newTeamName');
+    const contSelect = document.getElementById('newTeamContinent');
+    const code = codeInput.value.trim().toUpperCase();
+    const name = nameInput.value.trim();
+    const continent = contSelect.value;
+    if(!code || !name){ if(!code) codeInput.classList.add('border-rose-500'); if(!name) nameInput.classList.add('border-rose-500'); return; }
+    if(state.teams[code]){ codeInput.classList.add('border-rose-500'); return; }
+    codeInput.classList.remove('border-rose-500'); nameInput.classList.remove('border-rose-500');
+    const teamDoc = { code, name, continent, light: null, dark: null, alternate: null };
+    state.teams[code] = teamDoc;
+    state.colorContinent = continent;
+    renderColorContinentTabs(); renderTeamColors(); renderPairing();
+    codeInput.value=''; nameInput.value='';
+    if(state.isAdmin) db.doc(`windows/${state.windowId}/teams/${code}`).set(teamDoc)
+      .catch(e=>{ console.error(e); showToast('Could not add team.', 'error'); });
+  });
+
+  document.getElementById('importSeedBtn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('importSeedBtn');
+    btn.disabled = true; btn.textContent = 'Importing…';
+    try{ await importSeedData(state.windowId); showToast('Import complete.', 'ok'); }
+    catch(e){ console.error(e); showToast('Import failed: ' + e.message, 'error'); }
+    btn.disabled = false; btn.textContent = 'Import ' + ((WINDOWS.find(w=>w.id===state.windowId)||{}).label || 'data');
+  });
+
+  wireSettingsModal();
+  startClock();
+
+  auth.onAuthStateChanged(user=>{
+    state.isAdmin = !!user; // Firestore rules decide what this account may read or write
+    updateAuthUI();
+    if(state.isAdmin){
+      const backdrop = document.getElementById('settingsBackdrop');
+      backdrop.classList.add('hidden'); backdrop.classList.remove('flex');
+      loadWindow();
+    } else {
+      detachListeners();
+      state.games = []; state.teams = {}; state.palette = [];
+      setLiveBadge('offline');
+      setConnNote('Sign in (gear icon) to view and edit the schedule.');
+      renderAll();
+      const backdrop = document.getElementById('settingsBackdrop');
+      backdrop.classList.remove('hidden'); backdrop.classList.add('flex');
+    }
+  });
+}
+
+function wireSettingsModal(){
+  const backdrop = document.getElementById('settingsBackdrop');
+  const openModal = () => { backdrop.classList.remove('hidden'); backdrop.classList.add('flex'); };
+  const closeModal = () => { backdrop.classList.add('hidden'); backdrop.classList.remove('flex'); };
+  document.getElementById('settingsBtn').addEventListener('click', openModal);
+  document.getElementById('settingsCancel').addEventListener('click', closeModal);
+  backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeModal(); });
+  document.getElementById('settingsSignOut').addEventListener('click', ()=>{ auth.signOut(); });
+  document.getElementById('settingsSave').addEventListener('click', ()=>{
+    if(state.isAdmin) return; // button reads "Signed in" then, no-op
+    const email = document.getElementById('authEmailInput').value.trim();
+    const password = document.getElementById('authPasswordInput').value;
+    const errEl = document.getElementById('authError');
+    errEl.classList.add('hidden');
+    auth.signInWithEmailAndPassword(email, password).then(()=>{
+      closeModal();
+    }).catch(err=>{
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    });
+  });
+}
+
+function renderAll(){
+  renderKpiStrip();
+  renderZoneChips();
+  renderGames();
+  renderPalette();
+  renderColorContinentTabs();
+  renderTeamColors();
+  renderPairing();
+  renderFooter();
+  renderOperators();
+}
+
+function renderColorContinentTabs(){
+  const wrap = document.getElementById('colorContinentTabs');
+  const counts = {};
+  Object.values(state.teams).forEach(t=>{ counts[t.continent] = (counts[t.continent]||0)+1; });
+  const shown = CONT_ORDER.filter(c=>counts[c]);
+  const tabs = shown.length ? shown : CONT_ORDER;
+  if(!tabs.includes(state.colorContinent)) state.colorContinent = tabs[0];
+  wrap.innerHTML = tabs.map(c=>{
+    const active = state.colorContinent === c;
+    return `<button data-cc="${c}" class="px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${active ? 'text-blue-400 border-blue-500' : 'text-slate-400 border-transparent hover:text-slate-200'}">${CONT_LABEL[c]} <span class="text-slate-500 font-normal">(${counts[c]||0})</span></button>`;
+  }).join('');
+  wrap.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      state.colorContinent = b.dataset.cc;
+      renderColorContinentTabs(); renderTeamColors(); renderPairing();
+    });
+  });
+}
+
+/* ---------------- games tab ---------------- */
+
+function filteredGames(){
+  return state.games.filter(g=>{
+    if(state.zone !== 'all' && g.continent !== state.zone) return false;
+    if(state.search){
+      const hay = [g.home,g.away,g.homeName,g.awayName,g.city,g.venue,g.bovm,g.gfxOperator].join(' ').toLowerCase();
+      if(!hay.includes(state.search)) return false;
+    }
+    return true;
+  }).sort((a,b)=>a.sortKey-b.sortKey);
+}
+
+function renderKpiStrip(){
+  const g = state.games;
+  const total = g.length;
+  const bkOk = g.filter(x=>x.backupClock && x.backupClock.status==='ok').length;
+  const gfxOk = g.filter(x=>x.gfxExample && x.gfxExample.status==='ok').length;
+  const issues = g.filter(x=>(x.backupClock&&x.backupClock.status==='issue')||(x.gfxExample&&x.gfxExample.status==='issue')).length;
+  document.getElementById('kpiStrip').innerHTML = `
+    <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">Total Matches:</span><span class="text-sm font-bold text-white font-mono">${total}</span></div>
+    <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">Clock Cam Valid:</span><span class="text-sm font-bold text-emerald-400 font-mono">${bkOk}<span class="text-xs text-slate-500 font-normal">/${total}</span></span></div>
+    <div class="px-3 flex items-baseline gap-1.5"><span class="text-slate-400">GFX Ready:</span><span class="text-sm font-bold text-emerald-400 font-mono">${gfxOk}<span class="text-xs text-slate-500 font-normal">/${total}</span></span></div>
+    <div class="pl-3 flex items-baseline gap-1.5"><span class="text-slate-400">Issues:</span>
+      <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold ${issues ? 'bg-red-500/20 text-red-300 border border-red-500/40' : 'bg-slate-700/30 text-slate-400 border border-slate-700/40'}">${issues} Pending</span>
+    </div>`;
+}
+
+function renderZoneChips(){
+  const wrap = document.getElementById('zoneChips');
+  const counts = {};
+  state.games.forEach(g=>{ counts[g.continent] = (counts[g.continent]||0)+1; });
+  const allActive = state.zone==='all';
+  let html = `<span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">Zone:</span>`;
+  html += `<button data-zone="all" class="px-2.5 py-1 rounded font-semibold shadow-sm flex items-center gap-1.5 text-xs ${allActive ? 'bg-blue-600 text-white' : 'bg-[#162032] hover:bg-[#1f2e48] text-slate-300 border border-[#24334d]'}">
+    <span>ALL</span><span class="${allActive?'bg-blue-800':'bg-slate-800'} text-[10px] px-1.5 py-0.5 rounded-full font-mono">${state.games.length}</span></button>`;
+  CONT_ORDER.forEach(c=>{
+    const active = state.zone === c;
+    const hex = ZONE_HEX[c];
+    const zoneChipLabel = c === 'Asia' ? 'Asia-Oce' : CONT_LABEL[c];
+    html += `<button data-zone="${c}" class="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs transition-colors ${active ? 'bg-[#1f2e48] text-white border border-[#3a5480]' : 'bg-[#162032] hover:bg-[#1f2e48] text-slate-300 border border-[#24334d]'}">
+      <span class="w-2 h-2 rounded-full" style="background:#${hex}"></span>
+      <span>${zoneChipLabel}</span>
+      <span class="text-slate-400 font-mono text-[10px]">(${counts[c]||0})</span>
+    </button>`;
+  });
+  wrap.innerHTML = html;
+  wrap.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{ state.zone = b.dataset.zone; renderZoneChips(); renderGames(); });
+  });
+}
+
+function statusLabel(status){ return status==='ok' ? 'OK' : status==='issue' ? 'Issue' : 'Pending'; }
+
+function currentWindow(){ return WINDOWS.find(w=>w.id===state.windowId) || WINDOWS[0]; }
+function madridOffset(){ return currentWindow().madridOffset || 2; }
+function madridZone(){ return madridOffset() === 1 ? 'CET' : 'CEST'; }
+
+/* A check still pending within 3 hours of tip-off turns orange. */
+const DUE_WINDOW_MS = 3 * 3600 * 1000;
+function kickoffMs(g){
+  const m = /^(\d{1,2}):(\d{2})/.exec(g.espTime || '');
+  const base = Date.parse((g.dateISO || '') + 'T00:00:00Z');
+  if(!m || isNaN(base)) return NaN;
+  return base + (g.espNextDay ? 86400000 : 0) + (Number(m[1]) * 60 + Number(m[2])) * 60000 - madridOffset() * 3600000;
+}
+function isDue(kickoff){ return !isNaN(kickoff) && Date.now() >= kickoff - DUE_WINDOW_MS; }
+
+/* OK = green, issue = red, pending = grey (orange once it is due). */
+function statusStyle(status, due){
+  if(status==='ok') return { wrap:'bg-emerald-500/15 border-emerald-500/30', text:'text-emerald-200', label:'text-emerald-300', icon:'✓' };
+  if(status==='issue') return { wrap:'bg-red-500/20 border-red-500/50', text:'text-red-200', label:'text-red-300', icon:'⚠' };
+  if(due) return { wrap:'bg-orange-500/15 border-orange-500/50', text:'text-orange-200', label:'text-orange-300', icon:'○' };
+  return { wrap:'bg-slate-700/30 border-slate-600/30', text:'text-slate-500', label:'text-slate-400', icon:'○' };
+}
+function widgetStatus(widget){
+  return widget.dataset.ok === 'true' ? 'ok' : (widget.querySelector('.status-note').value.trim() ? 'issue' : 'pending');
+}
+function refreshDue(){
+  document.querySelectorAll('#gamesBody tr[data-kickoff]').forEach(tr=>{
+    const due = String(isDue(Number(tr.dataset.kickoff)));
+    tr.querySelectorAll('.status-widget').forEach(w=>{
+      if(w.dataset.due !== due){ w.dataset.due = due; restyleStatusWidget(w, widgetStatus(w)); }
+    });
+  });
+}
+
+function statusWidgetHtml(field, obj, due){
+  const status = obj.status || 'pending', note = obj.note || '';
+  const okActive = status === 'ok';
+  const st = statusStyle(status, due);
+  const wrapClass = st.wrap, textClass = st.text, labelClass = st.label, icon = st.icon;
+  const okClass = okActive ? 'bg-emerald-400 border-emerald-300 text-emerald-950' : 'border-slate-600 text-slate-500 hover:text-slate-300';
+  return `
+    <div class="status-widget rounded-md border px-1.5 py-1 flex flex-col gap-0.5 w-full min-w-[170px] ${wrapClass}" data-field="${field}" data-ok="${okActive}" data-due="${!!due}">
+      <div class="flex items-center justify-between gap-1">
+        <span class="status-label text-[10px] font-bold leading-none ${labelClass}"><span class="status-icon">${icon}</span> ${statusLabel(status)}</span>
+        <button type="button" title="Mark OK" class="ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ${okClass}">✓</button>
+      </div>
+      <textarea rows="2" placeholder="No note" class="status-note w-full bg-transparent text-[11px] leading-tight resize-none overflow-y-auto focus:outline-none ${textClass}">${esc(note)}</textarea>
+    </div>`;
+}
+
+function restyleStatusWidget(widget, status){
+  const noteEl = widget.querySelector('.status-note');
+  const okBtn = widget.querySelector('.ok-btn');
+  const labelEl = widget.querySelector('.status-label');
+  const st = statusStyle(status, widget.dataset.due === 'true');
+  widget.className = 'status-widget rounded-md border px-1.5 py-1 flex flex-col gap-0.5 w-full min-w-[170px] ' + st.wrap;
+  noteEl.className = 'status-note w-full bg-transparent text-[11px] leading-tight resize-none overflow-y-auto focus:outline-none ' + st.text;
+  okBtn.className = 'ok-btn shrink-0 w-4 h-4 rounded-full border flex items-center justify-center text-[9px] font-bold leading-none ' +
+    (status==='ok' ? 'bg-emerald-400 border-emerald-300 text-emerald-950' : 'border-slate-600 text-slate-500 hover:text-slate-300');
+  labelEl.className = 'status-label text-[10px] font-bold leading-none ' + st.label;
+  labelEl.innerHTML = `<span class="status-icon">${st.icon}</span> ${statusLabel(status)}`;
+  widget.dataset.ok = (status === 'ok') ? 'true' : 'false';
+}
+
+function renderGames(){
+  const tbody = document.getElementById('gamesBody');
+  // Firestore's realtime listener re-fires on every write, including our
+  // own (both the instant local echo and the server-confirmed one) -- a
+  // full table rebuild right then would yank focus out from under
+  // whatever the user is typing. Skip the rebuild while a cell in this
+  // table is focused; it'll catch up the moment they click away.
+  if(tbody.contains(document.activeElement)) return;
+  const banner = document.getElementById('emptyWindowBanner');
+  const tableWrap = document.getElementById('gamesTableWrap');
+  const list = filteredGames();
+
+  if(!state.games.length){
+    document.getElementById('crewBanner').classList.add('hidden');
+    const winLabel = (WINDOWS.find(w=>w.id===state.windowId)||{}).label || 'this window';
+    const importBtn = document.getElementById('importSeedBtn');
+    const subtitle = document.getElementById('emptyWindowSubtitle');
+    if(!state.isAdmin){
+      document.getElementById('emptyWindowTitle').textContent = 'Sign in to view this window';
+      subtitle.textContent = 'Click the gear icon and sign in with the admin account.';
+      importBtn.classList.add('hidden');
+    } else {
+      document.getElementById('emptyWindowTitle').textContent = `No data yet for ${winLabel}`;
+      const hasSeed = typeof SEED_DATA !== 'undefined' && SEED_DATA[state.windowId];
+      if(hasSeed){
+        subtitle.textContent = 'This window\'s data is ready to load from the Excel import prepared earlier.';
+        importBtn.textContent = 'Import ' + winLabel;
+        importBtn.classList.remove('hidden');
+      } else {
+        subtitle.textContent = 'Send the Excel files for this window to Claude and they\'ll be imported here — the schedule, crew and colours all come from a real import, never typed in by hand.';
+        importBtn.classList.add('hidden');
+      }
+    }
+    banner.classList.remove('hidden');
+    tableWrap.classList.add('hidden');
+    return;
+  }
+  banner.classList.add('hidden');
+  tableWrap.classList.remove('hidden');
+  // Crew names are not in the public seed: prompt the admin to load them from the Production Plan.
+  document.getElementById('crewBanner').classList.toggle('hidden',
+    !(state.isAdmin && state.games.length && state.games.every(g=>!g.bovm && !g.gfxOperator)));
+
+  if(!list.length){
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-slate-500 py-10">No games match this filter</td></tr>`;
+    return;
+  }
+  let html = '';
+  let lastDate = null;
+  const perDate = {};
+  list.forEach(g=>{ perDate[g.dateISO] = (perDate[g.dateISO]||0) + 1; });
+  list.forEach(g=>{
+    if(g.dateISO !== lastDate){
+      // A gap in the page background plus a heavier header makes each new day obvious.
+      if(lastDate !== null) html += `<tr aria-hidden="true"><td colspan="8" class="h-4 p-0 bg-[#0b0f19]"></td></tr>`;
+      lastDate = g.dateISO;
+      const n = perDate[g.dateISO];
+      html += `<tr class="bg-[#1a2540]" style="border-top:2px solid #3b82f6"><td colspan="8" class="py-2.5 px-3">
+        <span class="inline-flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide text-white">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg>
+          ${esc(g.dateLabel)}
+          <span class="text-[11px] font-semibold normal-case tracking-normal text-slate-400">· ${n} game${n===1?'':'s'}</span>
+        </span></td></tr>`;
+    }
+    const bk = g.backupClock || {status:'pending',note:''};
+    const gx = g.gfxExample || {status:'pending',note:''};
+    const zoneHex = ZONE_HEX[g.continent] || '94a3b8';
+    const cColor = companyColor(g.gfxCompany);
+    const kickoff = kickoffMs(g);
+    const due = isDue(kickoff);
+    html += `
+    <tr class="hover:bg-[#162033]/70 transition-colors" data-id="${g.id}" data-kickoff="${kickoff}" style="border-left:3px solid #${zoneHex}">
+      <td class="px-3 py-1 text-center">
+        <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase border" style="background:#${zoneHex}26;color:#${zoneHex};border-color:#${zoneHex}4d">${ZONE_ABBR[g.continent]||'?'}</span>
+      </td>
+      <td class="px-3 py-1">
+        <div class="flex items-center gap-2" title="${esc(g.home)} vs ${esc(g.away)}">
+          <span class="font-semibold text-white whitespace-nowrap">${esc(g.homeName)}</span>
+          <span class="inline-flex items-center gap-1 px-1 py-0.5 bg-[#0b0f19] border border-slate-700 rounded shrink-0">
+            <span class="w-3.5 h-3 rounded-sm border border-white/10" style="background:${esc(g.homeColor.hex)}"></span>
+            <span class="w-3.5 h-3 rounded-sm border border-white/10" style="background:${esc(g.awayColor.hex)}"></span>
+          </span>
+          <span class="font-semibold text-white whitespace-nowrap">${esc(g.awayName)}</span>
+        </div>
+      </td>
+      <td class="px-3 py-1 text-slate-300"><div class="truncate max-w-[150px]" title="${esc(g.venue)}">${esc(g.city)} <span class="text-slate-500">(${esc(g.venue)})</span></div></td>
+      <td class="px-3 py-1 whitespace-nowrap" title="GMT ${esc(g.gmtTime)} · ${esc(g.timeZone)}">
+        <span class="font-bold text-white font-mono">${esc(g.espTime)}${g.espNextDay?' <span class="text-blue-400">+1</span>':''} ${madridZone()}</span>
+        <span class="text-[10px] text-slate-400 block font-mono">${esc(g.localTime)} Local</span>
+      </td>
+      <td class="px-3 py-1">
+        <div class="flex flex-col gap-1">
+          <div class="flex items-baseline gap-2">
+            <span class="w-9 shrink-0 text-[9px] font-bold uppercase tracking-wider text-slate-500">BOVM</span>
+            <span class="text-slate-200">${esc(g.bovm)}</span>
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span class="w-9 shrink-0 text-[9px] font-bold uppercase tracking-wider text-slate-500">GFX</span>
+            <span class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-slate-200">${esc(g.gfxOperator)}</span>
+              <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-800 text-${cColor}-300 border border-slate-700">${esc(g.gfxCompany)}</span>
+            </span>
+          </div>
+        </div>
+      </td>
+      <td class="px-3 py-1">${statusWidgetHtml('backupClock', bk, due)}</td>
+      <td class="px-3 py-1">${statusWidgetHtml('gfxExample', gx, due)}</td>
+      <td class="px-3 py-1">
+        <textarea rows="3" placeholder="General note…" class="remarks-note w-full bg-[#0b0f19]/70 text-slate-300 text-xs leading-snug px-2 py-1.5 rounded border border-[#24334d] focus:border-blue-500 focus:ring-0 focus:outline-none resize-none overflow-y-auto">${esc(g.remarks)}</textarea>
+      </td>
+    </tr>`;
+  });
+  tbody.innerHTML = html;
+  wireGameRowEvents(tbody);
+}
+
+function autosize(ta){ ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight)+'px'; }
+
+function wireGameRowEvents(tbody){
+  tbody.querySelectorAll('textarea.remarks-note').forEach(inp=>{
+    let timer;
+    inp.addEventListener('input', ()=>{
+      clearTimeout(timer);
+      timer = setTimeout(()=>{ writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value); }, 700);
+    });
+    inp.addEventListener('blur', ()=>{
+      writeGameField(inp.closest('tr').dataset.id, 'remarks', inp.value);
+      setTimeout(renderGames, 50); // catch up on anything missed while this field had focus
+    });
+  });
+
+  wireStatusWidgets(tbody);
+}
+
+function wireStatusWidgets(tbody){
+  tbody.querySelectorAll('.status-widget').forEach(widget=>{
+    const ta = widget.querySelector('.status-note');
+    const okBtn = widget.querySelector('.ok-btn');
+    const row = widget.closest('tr');
+    const id = row.dataset.id;
+    const field = widget.dataset.field;
+    let lastStatus = widget.dataset.ok === 'true' ? 'ok' : (ta.value.trim() ? 'issue' : 'pending');
+
+    const currentStatus = () => widget.dataset.ok === 'true' ? 'ok' : (ta.value.trim() ? 'issue' : 'pending');
+    const persist = (status) => {
+      const g = state.games.find(x=>x.id===id);
+      if(g) g[field] = { status, note: ta.value };
+      renderKpiStrip();
+      if(state.isAdmin) db.doc(`windows/${state.windowId}/games/${id}`).update({ [field]: { status, note: ta.value } })
+        .catch(e=>{ console.error(e); showToast('Could not save — check your connection.', 'error'); });
+    };
+
+    let timer;
+    ta.addEventListener('input', ()=>{
+      const status = currentStatus();
+      if(status !== lastStatus){ restyleStatusWidget(widget, status); lastStatus = status; }
+      clearTimeout(timer);
+      timer = setTimeout(()=> persist(currentStatus()), 700);
+    });
+    ta.addEventListener('blur', ()=>{ persist(currentStatus()); setTimeout(renderGames, 50); });
+    okBtn.addEventListener('click', ()=>{
+      const turningOn = widget.dataset.ok !== 'true';
+      widget.dataset.ok = turningOn ? 'true' : 'false';
+      const status = currentStatus();
+      restyleStatusWidget(widget, status);
+      lastStatus = status;
+      persist(status);
+    });
+  });
+}
+
+function writeGameField(id, field, value){
+  const g = state.games.find(x=>x.id===id);
+  if(g) g[field] = value;
+  if(!state.isAdmin) return;
+  db.doc(`windows/${state.windowId}/games/${id}`).update({ [field]: value })
+    .catch(e=>{ console.error(e); showToast('Could not save — check your connection.', 'error'); });
+}
+
+/* ---------------- team colours tab ---------------- */
+
+function renderPalette(){
+  const grid = document.getElementById('paletteGrid');
+  if(!state.palette.length){
+    grid.innerHTML = `<div class="text-slate-500 text-xs col-span-full">No colours yet — add one above.</div>`;
+    return;
+  }
+  grid.innerHTML = state.palette.map(hex=>{
+    const rgb = hexToRgb(hex);
+    const rgbText = rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : '—';
+    return `
+    <div class="border border-[#2d3a54] rounded-lg overflow-hidden bg-[#0f172a]" data-hex="${hex}">
+      <div class="h-10 cursor-pointer swatch-click" style="background:${hex}"></div>
+      <div class="px-2 py-1.5 relative">
+        <button type="button" data-remove="${hex}" class="absolute top-1 right-1 text-slate-500 hover:text-rose-400 text-xs leading-none">×</button>
+        <div class="font-mono text-[11px] text-slate-200">${hex}</div>
+        <div class="font-mono text-[10px] text-slate-500">${rgbText}</div>
+      </div>
+    </div>`;
+  }).join('');
+  grid.querySelectorAll('.swatch-click').forEach(sw=>{
+    sw.addEventListener('click', ()=> copyText(sw.closest('[data-hex]').dataset.hex, null));
+  });
+  grid.querySelectorAll('[data-remove]').forEach(b=>{
+    b.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const hex = b.dataset.remove;
+      state.palette = state.palette.filter(h=>h!==hex);
+      renderPalette();
+      if(state.isAdmin) db.collection('palette').doc(hex.replace('#','')).delete()
+        .catch(e=>{ console.error(e); showToast('Could not remove colour.', 'error'); });
+    });
+  });
+}
+
+function slotRowHtml(teamCode, slot, label, hex){
+  const rgb = hexToRgb(hex||'#000000');
+  const rgbText = rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : '—';
+  return `
+  <div class="flex flex-col gap-1.5" data-slot-row="${teamCode}:${slot}">
+    <div class="flex items-center gap-2.5">
+      <button type="button" class="pick-swatch w-7 h-7 rounded-md border border-white/10 flex-shrink-0" style="background:${hex||'transparent'};${hex?'':'border-style:dashed'}" data-pick="${teamCode}:${slot}" title="Pick from palette"></button>
+      <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span class="text-[10px] uppercase tracking-wide text-slate-500">${label}</span>
+        <div class="flex items-center gap-2 flex-wrap">
+          <input class="bg-[#0b0f19] border border-[#2d3a54] rounded px-1.5 py-0.5 text-[11px] font-mono w-24 text-slate-200 focus:border-blue-500 focus:outline-none" value="${hex||''}" placeholder="#RRGGBB" data-team="${teamCode}" data-slot="${slot}">
+          <span class="font-mono text-[10px] text-slate-500">${rgbText}</span>
+          <button type="button" class="text-[10px] text-slate-500 hover:text-slate-300 border border-[#2d3a54] rounded px-1.5 py-0.5" data-copy="${hex||''}">Copy</button>
+          ${slot === 'alternate' ? `<button type="button" class="text-[10px] text-slate-500 hover:text-rose-400 border border-[#2d3a54] rounded px-1.5 py-0.5" data-remove-alt="${teamCode}" title="Remove the alternate colour">Remove</button>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function palettePickerHtml(teamCode, slot){
+  if(!state.palette.length) return `<div class="text-[10px] text-slate-500 py-1">No palette colours yet.</div>`;
+  return `
+  <div class="palette-picker flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg mt-1">
+    ${state.palette.map(hex=>`<button type="button" class="w-6 h-6 rounded border border-white/10" style="background:${hex}" data-pick-apply="${teamCode}:${slot}:${hex}" title="${hex}"></button>`).join('')}
+  </div>`;
+}
+
+function teamMatchesSearch(t){
+  return [t.code, t.name].join(' ').toLowerCase().includes(state.search);
+}
+function gameMatchesTeamSearch(g){
+  return [g.home, g.away, g.homeName, g.awayName].join(' ').toLowerCase().includes(state.search);
+}
+
+function renderTeamColors(){
+  const wrap = document.getElementById('teamsByContinent');
+  const active = document.activeElement;
+  if(active && active.matches('input[data-team]') && wrap.contains(active)) return; // don't yank focus while typing a hex code
+  const teams = state.teams;
+  // While searching, look across all confederations (by team code or full name).
+  document.getElementById('colorContinentTabs').classList.toggle('hidden', !!state.search);
+  document.getElementById('colorsColTitle').textContent = state.search ? 'Team Colours' : `Team Colours — ${CONT_LABEL[state.colorContinent]}`;
+  document.getElementById('fixturesColTitle').textContent = state.search ? 'Fixtures' : `${CONT_LABEL[state.colorContinent]} Fixtures`;
+  if(!Object.keys(teams).length){
+    wrap.innerHTML = `<div class="text-slate-500 text-xs py-4">${state.isAdmin ? 'No team colours loaded for this window yet.' : 'Sign in via the gear icon to load data.'}</div>`;
+    return;
+  }
+  const list = Object.values(teams).filter(t=> state.search ? teamMatchesSearch(t) : t.continent===state.colorContinent).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!list.length){
+    wrap.innerHTML = `<div class="text-slate-500 text-xs py-4">${state.search ? `No teams match "${esc(state.search)}".` : 'No teams for this confederation yet.'}</div>`;
+    return;
+  }
+  wrap.innerHTML = list.map(t=>`
+    <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-3 flex flex-col gap-2.5">
+      <div class="flex justify-between items-baseline">
+        <span class="font-semibold text-sm text-white">${esc(t.name)}</span>
+        <span class="flex items-center gap-2">
+          <span class="font-mono text-[10px] text-slate-500">${esc(t.code)}</span>
+          <button type="button" data-delete-team="${t.code}" class="text-slate-500 hover:text-rose-400 text-xs leading-none" title="Delete team">×</button>
+        </span>
+      </div>
+      ${slotRowHtml(t.code,'light','Light',t.light)}
+      ${slotRowHtml(t.code,'dark','Dark',t.dark)}
+      ${t.alternate
+        ? slotRowHtml(t.code,'alternate','Alternate',t.alternate)
+        : `<button type="button" data-add-alt="${t.code}" class="text-[11px] text-slate-500 hover:text-slate-300 border border-dashed border-[#2d3a54] rounded px-2 py-1 self-start">+ Add alternate colour</button>`}
+    </div>
+  `).join('');
+
+  wrap.querySelectorAll('input[data-team]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const v = inp.value.trim();
+      if(!v) return;
+      if(!isValidHex(v)){ inp.classList.add('border-rose-500'); return; }
+      inp.classList.remove('border-rose-500');
+      inp.blur(); // let the card re-render with the saved value
+      writeTeamField(inp.dataset.team, inp.dataset.slot, normHex(v));
+    });
+  });
+  wrap.querySelectorAll('[data-copy]').forEach(b=>{
+    b.addEventListener('click', ()=>{ if(b.dataset.copy) copyText(b.dataset.copy, b); });
+  });
+  wrap.querySelectorAll('[data-add-alt]').forEach(b=>{
+    b.addEventListener('click', ()=>{ writeTeamField(b.dataset.addAlt, 'alternate', '#FFFFFF'); });
+  });
+  // Games that already use this colour keep it: per-game colours are stored on the game itself.
+  wrap.querySelectorAll('[data-remove-alt]').forEach(b=>{
+    b.addEventListener('click', ()=>{ writeTeamField(b.dataset.removeAlt, 'alternate', null); });
+  });
+  wrap.querySelectorAll('[data-delete-team]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const code = b.dataset.deleteTeam;
+      if(!confirm(`Delete ${code} from Team Colours? This does not remove it from the schedule.`)) return;
+      delete state.teams[code];
+      renderColorContinentTabs(); renderTeamColors(); renderPairing();
+      if(state.isAdmin) db.doc(`windows/${state.windowId}/teams/${code}`).delete()
+        .catch(e=>{ console.error(e); showToast('Could not delete team.', 'error'); });
+    });
+  });
+  wrap.querySelectorAll('[data-pick]').forEach(sw=>{
+    sw.addEventListener('click', ()=>{
+      const row = sw.closest('[data-slot-row]');
+      const existingPicker = row.querySelector('.palette-picker');
+      document.querySelectorAll('.palette-picker').forEach(p=>p.remove());
+      if(existingPicker) return; // was open, click closed it
+      const [teamCode, slot] = sw.dataset.pick.split(':');
+      row.insertAdjacentHTML('beforeend', palettePickerHtml(teamCode, slot));
+      row.querySelectorAll('[data-pick-apply]').forEach(pb=>{
+        pb.addEventListener('click', ()=>{
+          const [tc, sl, hex] = pb.dataset.pickApply.split(':');
+          writeTeamField(tc, sl, hex);
+        });
+      });
+    });
+  });
+}
+
+function writeTeamField(code, slot, hex){
+  if(state.teams[code]) state.teams[code][slot] = hex;
+  renderTeamColors(); renderGames(); renderPairing();
+  if(!state.isAdmin) return;
+  db.doc(`windows/${state.windowId}/teams/${code}`).update({ [slot]: hex })
+    .catch(e=>{ console.error(e); showToast('Could not save colour.', 'error'); });
+}
+
+/* ---------------- pairing table ---------------- */
+
+let openGamePicker = null; // { gameId, side, el } | null while a per-game colour picker is open
+
+function teamColorPickerHtml(gameId, side, teamCode){
+  const t = state.teams[teamCode];
+  const options = t ? [['light','Light',t.light], ['dark','Dark',t.dark], ['alternate','Alternate',t.alternate]].filter(o=>o[2]) : [];
+  if(!options.length) return `<div class="palette-picker text-[10px] text-slate-500 py-1 px-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl whitespace-nowrap">${teamCode} has no colours defined yet — set them in the Team Colours cards above.</div>`;
+  return `
+  <div class="palette-picker flex flex-wrap gap-1.5 p-2 bg-[#0b0f19] border border-[#2d3a54] rounded-lg shadow-xl w-max">
+    ${options.map(([slot,label,hex])=>`
+      <button type="button" class="flex items-center gap-1.5 px-2 py-1 rounded border border-white/10 bg-[#111827] hover:bg-[#1a2234]" data-pick-apply="${gameId}:${side}:${hex}" title="${hex}">
+        <span class="w-4 h-4 rounded border border-white/15" style="background:${hex}"></span>
+        <span class="text-[10px] text-slate-300">${label}</span>
+      </button>`).join('')}
+  </div>`;
+}
+
+// Positions the picker relative to its trigger button using fixed coordinates,
+// so it can never get clipped by the table's own scroll/overflow wrappers, and
+// clamps to the viewport so it never opens partly off-screen.
+function positionGamePicker(el, btn){
+  el.style.position = 'fixed';
+  el.style.zIndex = '9999';
+  el.style.visibility = 'hidden';
+  document.body.appendChild(el);
+  const r = btn.getBoundingClientRect();
+  const ew = el.offsetWidth, eh = el.offsetHeight;
+  let left = r.left;
+  if(left + ew > window.innerWidth - 8) left = window.innerWidth - ew - 8;
+  if(left < 8) left = 8;
+  let top = r.bottom + 4;
+  if(top + eh > window.innerHeight - 8) top = r.top - eh - 4;
+  if(top < 8) top = 8;
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+  el.style.visibility = 'visible';
+}
+
+function contrastTextColor(hex){
+  if(!hex) return '#FFFFFF';
+  const h = hex.replace('#','');
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  if([r,g,b].some(isNaN)) return '#FFFFFF';
+  const luminance = 0.299*r + 0.587*g + 0.114*b;
+  return luminance > 150 ? '#252525' : '#FFFFFF';
+}
+
+function teamStripeHtml(gameId, homeCode, homeHex, awayCode, awayHex){
+  const homeText = contrastTextColor(homeHex);
+  const awayText = contrastTextColor(awayHex);
+  return `
+  <div class="score-stripe">
+    <button type="button" class="stripe-team stripe-home" style="background:${esc(homeHex)};color:${homeText}" data-pick-game="${gameId}:home:${homeCode}" title="Set ${esc(homeCode)}'s colour for this game only">
+      <span class="stripe-code">${esc(homeCode)}</span>
+    </button>
+    <div class="stripe-gap"></div>
+    <button type="button" class="stripe-team stripe-away" style="background:${esc(awayHex)};color:${awayText}" data-pick-game="${gameId}:away:${awayCode}" title="Set ${esc(awayCode)}'s colour for this game only">
+      <span class="stripe-code">${esc(awayCode)}</span>
+    </button>
+  </div>`;
+}
+
+function renderPairing(){
+  const tbody = document.getElementById('pairingBody');
+  if(openGamePicker) return;
+  const list = state.games.filter(g=> state.search ? gameMatchesTeamSearch(g) : g.continent===state.colorContinent).slice().sort((a,b)=>a.sortKey-b.sortKey);
+  if(!list.length){ tbody.innerHTML = `<tr><td colspan="2" class="text-center text-slate-500 py-6">${state.search ? `No fixtures match "${esc(state.search)}"` : 'No fixtures for this confederation yet'}</td></tr>`; return; }
+  tbody.innerHTML = list.map(g=>`
+    <tr data-fixture-row="${g.id}">
+      <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap align-top">${esc(g.dateLabel.replace(/^[A-Za-z]+,?\s*/,''))}</td>
+      <td class="py-2 px-3 align-top" data-game-slot="${g.id}">${teamStripeHtml(g.id, g.home, g.homeColor.hex, g.away, g.awayColor.hex)}</td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('[data-pick-game]').forEach(sw=>{
+    sw.addEventListener('click', ()=>{
+      const [gameId, side, teamCode] = sw.dataset.pickGame.split(':');
+      const wasOpenHere = openGamePicker && openGamePicker.gameId === gameId && openGamePicker.side === side;
+      if(openGamePicker){ openGamePicker.el.remove(); openGamePicker = null; }
+      if(wasOpenHere){ renderPairing(); return; }
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = teamColorPickerHtml(gameId, side, teamCode);
+      const el = wrapper.firstElementChild;
+      positionGamePicker(el, sw);
+      el.querySelectorAll('[data-pick-apply]').forEach(pb=>{
+        pb.addEventListener('click', ()=>{
+          const [gid, sd, hex] = pb.dataset.pickApply.split(':');
+          writeGameColor(gid, sd, hex);
+        });
+      });
+      openGamePicker = { gameId, side, el };
+    });
+  });
+}
+
+function writeGameColor(gameId, side, hex){
+  const g = state.games.find(x=>x.id===gameId);
+  const field = side === 'home' ? 'homeColor' : 'awayColor';
+  if(g) g[field] = { hex, slot: 'custom' };
+  // Close the picker first — renderPairing() is a no-op while one is open.
+  if(openGamePicker){ openGamePicker.el.remove(); openGamePicker = null; }
+  renderGames(); renderPairing();
+  if(!state.isAdmin) return;
+  db.doc(`windows/${state.windowId}/games/${gameId}`).update({ [field]: { hex, slot: 'custom' } })
+    .catch(e=>{ console.error(e); showToast('Could not save colour.', 'error'); });
+  const pubField = side === 'home' ? 'homeColorHex' : 'awayColorHex';
+  db.doc(`windows/${state.windowId}/publicPairings/${gameId}`).update({ [pubField]: hex })
+    .catch(e=>console.error('publicPairings mirror failed', e));
+}
+
+/* ---------------- GFX operators tab ---------------- */
+
+/* Admin-only: under windows/<id>/games/**, which only the admin can read or write. */
+function contactsPath(windowId){ return `windows/${windowId}/games/_meta/contacts/gfx`; }
+
+/* One Production Plan file fills in both the crew on each game (BOVM / GFX operator) and the GFX
+   operator contacts. Both are stored only in admin-only documents; the public code has neither. */
+async function importFromPlan(e){
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  if(!state.isAdmin){ showToast('Sign in first (gear icon).', 'error'); return; }
+  const labels = document.querySelectorAll('.plan-file-label');
+  labels.forEach(l=>{ l.textContent = 'Reading ' + file.name + '…'; });
+  try{
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await file.arrayBuffer());
+    const done = [];
+
+    if(state.games.length){
+      const { updates, warnings } = crewFromPlan(wb, state.games);
+      const changed = updates.filter(u=>{
+        const g = state.games.find(x=>x.id===u.id);
+        return g && (g.bovm !== u.bovm || g.gfxOperator !== u.gfxOperator || g.gfxCompany !== u.gfxCompany);
+      });
+      changed.forEach(u=>{ const g = state.games.find(x=>x.id===u.id); Object.assign(g, { bovm: u.bovm, gfxOperator: u.gfxOperator, gfxCompany: u.gfxCompany }); });
+      renderGames();
+      if(changed.length){
+        const batch = db.batch();
+        changed.forEach(u=> batch.update(db.doc(`windows/${state.windowId}/games/${u.id}`), { bovm: u.bovm, gfxOperator: u.gfxOperator, gfxCompany: u.gfxCompany }));
+        try{ await batch.commit(); }
+        catch(err){ console.error(err); showToast('Crew shown for this session only — could not save: ' + err.message, 'error'); }
+      }
+      done.push(`crew for ${updates.filter(u=>u.bovm || u.gfxOperator).length} games`);
+      state.operatorsWarnings = warnings.slice();
+    }
+
+    const { operators, warnings } = parseGfxOperators(wb);
+    if(operators.length){
+      const importedAt = new Date().toISOString();
+      state.operators = operators; state.operatorsWarnings = (state.operatorsWarnings || []).concat(warnings);
+      state.operatorsMeta = { source: file.name, importedAt }; state.operatorsError = '';
+      state.operatorCompany = 'all';
+      renderOperators();
+      try{ await db.doc(contactsPath(state.windowId)).set({ operators, source: file.name, importedAt }); }
+      catch(err){ console.error(err); showToast('Contacts shown for this session only — could not save: ' + err.message, 'error'); }
+      done.push(`${operators.length} GFX operators`);
+    }
+    if(!done.length) throw new Error('Nothing to load from this file.');
+    showToast(`Loaded ${done.join(' and ')} from ${file.name}.`, 'ok');
+  }catch(err){
+    console.error(err);
+    showToast(err.message || 'Could not read this file.', 'error');
+  }finally{
+    labels.forEach(l=>{ l.textContent = 'Load from Production Plan (.xlsx)'; });
+  }
+}
+
+function filteredOperators(){
+  return (state.operators || []).filter(o=>{
+    if(state.operatorCompany !== 'all' && o.company !== state.operatorCompany) return false;
+    if(!state.search) return true;
+    return [o.name, o.company, ...o.venues.map(v=>`${v.city} ${v.country}`)].join(' ').toLowerCase().includes(state.search);
+  });
+}
+
+function renderOperators(){
+  const body = document.getElementById('operatorsBody');
+  if(!body) return;
+  const chips = document.getElementById('operatorCompanyChips');
+  const actions = document.getElementById('operatorsActions');
+  const meta = document.getElementById('operatorsMeta');
+  const warn = document.getElementById('operatorsWarnings');
+  document.getElementById('operatorsTitle').textContent = `GFX Operators — ${currentWindow().label}`;
+  const emptyRow = msg => `<tr><td colspan="5" class="text-center text-slate-500 py-10">${msg}</td></tr>`;
+
+  warn.classList.toggle('hidden', !state.operatorsWarnings.length);
+  warn.innerHTML = state.operatorsWarnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join('');
+  if(!state.isAdmin){
+    meta.textContent = ''; chips.innerHTML = ''; actions.innerHTML = '';
+    body.innerHTML = emptyRow('Sign in (gear icon) to see the GFX operators.');
+    return;
+  }
+  if(state.operatorsError){
+    meta.textContent = 'Could not read the saved contacts: ' + state.operatorsError;
+  } else if(state.operatorsMeta){
+    const when = state.operatorsMeta.importedAt ? new Date(state.operatorsMeta.importedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    meta.textContent = `Loaded from ${state.operatorsMeta.source || 'the Production Plan'}${when ? ' · ' + when : ''}`;
+  } else {
+    meta.textContent = state.operators === null ? 'Loading…' : '';
+  }
+  const ops = state.operators || [];
+  if(!ops.length){
+    chips.innerHTML = ''; actions.innerHTML = '';
+    body.innerHTML = emptyRow(state.operators === null ? 'Loading…' : 'No operators loaded for this window yet. Click "Load from Production Plan (.xlsx)" and pick this window\'s Production Plan.');
+    return;
+  }
+
+  const companies = [...new Set(ops.map(o=>o.company))].sort((a,b)=>a.localeCompare(b));
+  if(state.operatorCompany !== 'all' && !companies.includes(state.operatorCompany)) state.operatorCompany = 'all';
+  const chip = (value, label, n) => {
+    const active = state.operatorCompany === value;
+    return `<button type="button" data-op-company="${esc(value)}" class="px-2.5 py-1 rounded flex items-center gap-1.5 text-xs transition-colors ${active ? 'bg-blue-600 text-white' : 'bg-[#162032] hover:bg-[#1f2e48] text-slate-300 border border-[#24334d]'}">
+      <span>${esc(label)}</span><span class="${active ? 'bg-blue-800' : 'bg-slate-800'} text-[10px] px-1.5 py-0.5 rounded-full font-mono">${n}</span></button>`;
+  };
+  chips.innerHTML = `<span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1">Company:</span>`
+    + chip('all', 'All', ops.length)
+    + companies.map(c=>chip(c, c, ops.filter(o=>o.company===c).length)).join('');
+  chips.querySelectorAll('[data-op-company]').forEach(b=>b.addEventListener('click', ()=>{ state.operatorCompany = b.dataset.opCompany; renderOperators(); }));
+
+  const list = filteredOperators();
+  const withPhone = list.filter(o=>o.phones.some(opPhoneE164));
+  const scope = state.operatorCompany === 'all' ? 'All companies' : state.operatorCompany;
+  actions.innerHTML = `
+    <span class="text-xs text-slate-400 mr-1">${esc(scope)} · ${list.length} operator${list.length===1?'':'s'}</span>
+    <button type="button" id="opCopyList" class="px-3 py-1.5 bg-[#1a2234] hover:bg-[#222d42] border border-[#2d3a54] rounded text-xs font-semibold text-slate-200" ${withPhone.length ? '' : 'disabled'}>Copy names &amp; numbers</button>
+    <button type="button" id="opDownloadVcf" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-bold text-white" ${withPhone.length ? '' : 'disabled'}>Download contacts (.vcf)</button>
+    <button type="button" id="opDownloadGoogle" class="px-3 py-1.5 bg-[#1a2234] hover:bg-[#222d42] border border-[#2d3a54] rounded text-xs font-semibold text-slate-200" ${withPhone.length ? '' : 'disabled'}>Google Contacts (.csv)</button>
+    <span class="text-[11px] text-slate-500 basis-full">Contacts are named "Name (Company)", so in WhatsApp you can start a new group and search the company name to add everyone. Phone: open the .vcf. Google Contacts: contacts.google.com → Import → the .csv; each company gets its own label ("WCQ GFX - TAF" …).</span>`;
+  const copyBtn = document.getElementById('opCopyList');
+  copyBtn.addEventListener('click', ()=>{
+    const text = withPhone.map(o=>`${o.name} (${o.company}) ${o.phones.map(opPhoneE164).filter(Boolean).join(' / ')}`).join('\n');
+    copyText(text, copyBtn);
+  });
+  const slug = scope.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const download = (text, type, ext) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = `WCQ-${state.windowId.toUpperCase()}-${slug}-GFX-operators.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  };
+  document.getElementById('opDownloadVcf').addEventListener('click', ()=>
+    download(operatorsVcf(withPhone, currentWindow().label), 'text/vcard', 'vcf'));
+  document.getElementById('opDownloadGoogle').addEventListener('click', ()=>
+    download(operatorsGoogleCsv(withPhone, currentWindow().label), 'text/csv;charset=utf-8', 'csv'));
+
+  if(!list.length){ body.innerHTML = emptyRow('No operators match this filter.'); return; }
+  body.innerHTML = list.map(o=>{
+    const phones = o.phones.map(p=>{
+      const e164 = opPhoneE164(p);
+      const shown = e164 || p;
+      return `<div class="flex items-center gap-2">
+        <span class="font-mono text-slate-200">${esc(shown)}</span>
+        <button type="button" data-copy="${esc(shown)}" class="text-[10px] text-slate-500 hover:text-slate-300 border border-[#2d3a54] rounded px-1.5 py-0.5">Copy</button>
+        ${e164 ? `<a href="https://wa.me/${e164.slice(1)}" target="_blank" rel="noopener" class="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300">WhatsApp</a>` : '<span class="text-[10px] text-amber-300">no country code</span>'}
+      </div>`;
+    }).join('') || '<span class="text-slate-500">—</span>';
+    const emails = o.emails.map(e=>`<a href="mailto:${esc(e)}" class="block text-slate-300 hover:text-blue-400">${esc(e)}</a>`).join('') || '<span class="text-slate-500">—</span>';
+    const venues = o.venues.map(v=>`<div>${esc(v.city)}${v.country && v.country !== v.city ? ` <span class="text-slate-500">(${esc(v.country)})</span>` : ''}</div>`).join('');
+    return `<tr class="hover:bg-[#162033]/70 align-top">
+      <td class="py-2 px-3 font-semibold text-white whitespace-nowrap">${esc(o.name)}</td>
+      <td class="py-2 px-3"><span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-${companyColor(o.company)}-300 border border-slate-700 whitespace-nowrap">${esc(o.company)}</span></td>
+      <td class="py-2 px-3 text-slate-300">${venues}</td>
+      <td class="py-2 px-3 whitespace-nowrap"><div class="flex flex-col gap-1">${phones}</div></td>
+      <td class="py-2 px-3">${emails}</td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('[data-copy]').forEach(b=>b.addEventListener('click', ()=>copyText(b.dataset.copy, b)));
+}
+
+/* ---------------- footer ---------------- */
+
+function renderFooter(){
+  const g = state.games;
+  const ok = g.filter(x=>(x.backupClock&&x.backupClock.status==='ok')&&(x.gfxExample&&x.gfxExample.status==='ok')).length;
+  const issue = g.filter(x=>(x.backupClock&&x.backupClock.status==='issue')||(x.gfxExample&&x.gfxExample.status==='issue')).length;
+  const pending = g.length - ok - issue;
+  document.getElementById('statusSummary').innerHTML = `
+    <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="text-slate-300">${ok} fully confirmed</span></span>
+    <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-red-500"></span><span class="text-slate-300">${issue} flagged</span></span>
+    <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-slate-500"></span><span class="text-slate-300">${pending} pending</span></span>
+  `;
+  const conn = document.getElementById('footerConn');
+  conn.textContent = state.lastSync ? `Synced ${state.lastSync.toLocaleTimeString('en-GB')}` : 'Not connected';
+}
+
+/* ---------------- one-time seed import ---------------- */
+
+async function importSeedData(windowId){
+  const seed = (typeof SEED_DATA !== 'undefined') ? SEED_DATA[windowId] : null;
+  if(!seed) throw new Error('No seed data prepared for this window');
+
+  const winLabel = (WINDOWS.find(w=>w.id===windowId)||{}).label || windowId;
+  const batches = [];
+  let batch = db.batch();
+  let opCount = 0;
+  function addOp(ref, data){
+    batch.set(ref, data);
+    opCount++;
+    if(opCount >= 400){ batches.push(batch); batch = db.batch(); opCount = 0; }
+  }
+
+  seed.games.forEach(g=>{
+    addOp(db.doc(`windows/${windowId}/games/${g.id}`), g);
+    addOp(db.doc(`windows/${windowId}/publicPairings/${g.id}`), {
+      id: g.id, dateLabel: g.dateLabel, dateISO: g.dateISO, sortKey: g.sortKey,
+      home: g.home, away: g.away,
+      homeColorHex: g.homeColor.hex, awayColorHex: g.awayColor.hex,
+      continent: g.continent,
+    });
+  });
+  Object.entries(seed.teams).forEach(([code, t])=>{
+    addOp(db.doc(`windows/${windowId}/teams/${code}`), t);
+  });
+  seed.palette.forEach(hex=>{
+    addOp(db.collection('palette').doc(hex.replace('#','')), { hex });
+  });
+  addOp(db.doc(`windows/${windowId}`), { id: windowId, label: winLabel, active: true });
+
+  batches.push(batch);
+  for(const b of batches) await b.commit();
+}
+
+/* ---------------- Excel export ---------------- */
+/* Produces a workbook shaped like the production team's own "Timing and
+   follow-up" tracker: one boxed table per broadcast date, rows tinted by
+   confederation, a live GMT->Madrid time formula, and green/red flags on
+   the same fields the Game Schedule tab tracks. */
+
+const XL_HEADER_FONT = { name:'DAZN Oscine XBold', size:14, bold:true };
+const XL_DATE_FONT = { name:'DAZN Trim', size:18, bold:true };
+const XL_FONT_WIDE = { name:'Aptos', size:11 };
+const XL_FONT_NARROW = { name:'Aptos Narrow', size:11 };
+const XL_GREEN = 'FF00B050';
+const XL_RED = 'FFFF0000';
+const XL_WHITE = 'FFFFFFFF';
+const XL_CONT_FILL = { Africa:'FFB4E5A2', Europe:'FF83CBEB', America:'FFF6C6AD', Asia:'FFFFFF99' };
+const XL_DEFAULT_FILL = 'FFD9D9D9';
+const XL_GAMES_COLUMNS = [
+  ['Home',8.43],['Away',7.86],['Venue',39.71],['City',18.29],['GMT',7.43],['ESP Time',7.29],
+  ['BOVM',21.43],['GFX operator',26.86],['BKP CLOCK',16.43],['GFX EXAMPLES',14.43],
+  ['Technical power',13.43],['Additional Remarks',49.0],
+];
+
+function xlStatus(status){ return status==='ok' ? 'ok' : status==='issue' ? 'NO' : ''; }
+
+function xlBorder(top, bottom, colIdx, nCols, header){
+  const thin = { style:'thin' }, med = { style:'medium' };
+  return {
+    top: (header||top) ? med : thin,
+    bottom: (header||bottom) ? med : thin,
+    left: colIdx===1 ? med : thin,
+    right: colIdx===nCols ? med : thin,
+  };
+}
+
+function xlAddCF(ws, ref, text, colorArgb, fontArgb, priority){
+  const style = { fill: { type:'pattern', pattern:'solid', bgColor:{argb:colorArgb} } };
+  if(fontArgb) style.font = { color:{argb:fontArgb} };
+  ws.addConditionalFormatting({ ref, rules: [{ type:'cellIs', operator:'equal', formulae:[`"${text}"`], style, priority }] });
+}
+
+function buildGamesSheet(wb, sheetName, games){
+  const ws = wb.addWorksheet(sheetName, { views: [{ state:'frozen', ySplit:2, showGridLines:false }] });
+  XL_GAMES_COLUMNS.forEach((c,i)=>{ ws.getColumn(i+1).width = c[1]; });
+
+  // Group by calendar date first (dateISO), THEN sort within the group by
+  // sortKey — never sort the whole list first and group by "did dateISO
+  // change from the previous row", since a stray ordering quirk in the
+  // sortKey values could split one date's games into two disjoint blocks.
+  const byDate = new Map();
+  games.forEach(g=>{
+    if(!byDate.has(g.dateISO)) byDate.set(g.dateISO, { label: g.dateLabel, games: [] });
+    byDate.get(g.dateISO).games.push(g);
+  });
+  const groups = Array.from(byDate.keys()).sort().map(iso=>{
+    const entry = byDate.get(iso);
+    const sortedGames = entry.games.slice().sort((a,b)=> a.sortKey - b.sortKey);
+    return [entry.label, sortedGames];
+  });
+
+  let row = 1;
+  groups.forEach(([dateLabel, groupGames], gi)=>{
+    if(gi>0) row += 2; // blank spacer rows between broadcast dates
+
+    ws.mergeCells(row,1,row,8);
+    const dcell = ws.getCell(row,1);
+    dcell.value = dateLabel;
+    dcell.font = XL_DATE_FONT;
+    dcell.alignment = { horizontal:'center', vertical:'middle' };
+    ws.getRow(row).height = 21.95;
+    row++;
+
+    const headerRow = row;
+    XL_GAMES_COLUMNS.forEach((c,i)=>{
+      const cell = ws.getCell(headerRow, i+1);
+      cell.value = c[0];
+      cell.font = XL_HEADER_FONT;
+      cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+      cell.border = xlBorder(true, true, i+1, XL_GAMES_COLUMNS.length, true);
+    });
+    ws.getRow(headerRow).height = 47.1;
+    row++;
+
+    const firstDataRow = row;
+    groupGames.forEach((g, idx)=>{
+      const isTop = idx===0, isBottom = idx===groupGames.length-1;
+      const fillArgb = XL_CONT_FILL[g.continent] || XL_DEFAULT_FILL;
+      let remarks = g.remarks || '';
+      if(g.espNextDay) remarks = ('ESP time is +1 day. ' + remarks).trim();
+
+      const values = [
+        g.home, g.away, g.venue, g.city, null, null, g.bovm, g.gfxOperator,
+        xlStatus(g.backupClock && g.backupClock.status),
+        xlStatus(g.gfxExample && g.gfxExample.status),
+        g.technicalPower || '', remarks,
+      ];
+      values.forEach((v,i)=>{
+        const cell = ws.getCell(row, i+1);
+        if(i!==4 && i!==5) cell.value = v;
+        cell.font = i<6 ? XL_FONT_WIDE : XL_FONT_NARROW;
+        cell.alignment = { horizontal:'center', vertical:'middle', wrapText: i===11 };
+        cell.border = xlBorder(isTop, isBottom, i+1, XL_GAMES_COLUMNS.length, false);
+        cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb: fillArgb} };
+      });
+
+      const [hh, mm] = (g.gmtTime || '0:0').split(':').map(Number);
+      const gmtCell = ws.getCell(row,5);
+      // UTC constructor: Excel's serial-date math is timezone-agnostic, and
+      // for a date this old (1899, the usual "day zero" for time-only
+      // cells) the local constructor picks up the host's historical zone
+      // offset (some are not even whole hours), corrupting the displayed
+      // time. Date.UTC sidesteps that entirely.
+      gmtCell.value = new Date(Date.UTC(1899,11,30,hh||0,mm||0));
+      gmtCell.numFmt = 'h:mm';
+      const espCell = ws.getCell(row,6);
+      espCell.value = { formula: `E${row} + TIME(${madridOffset()},0,0)` };
+      espCell.numFmt = 'h:mm';
+
+      row++;
+    });
+    ws.getRow(firstDataRow).height = 15.95;
+  });
+
+  const lastRow = Math.max(row - 1, 1);
+  xlAddCF(ws, `I1:J${lastRow}`, 'OK', XL_GREEN, null, 1);
+  xlAddCF(ws, `I1:J${lastRow}`, 'NO', XL_RED, XL_WHITE, 2);
+  xlAddCF(ws, `K1:K${lastRow}`, 'yes', XL_GREEN, null, 3);
+  xlAddCF(ws, `K1:K${lastRow}`, 'no', XL_RED, XL_WHITE, 4);
+  return ws;
+}
+
+function buildRosterSheet(wb, sheetName, games, roleKey, companyKey){
+  const ws = wb.addWorksheet(sheetName);
+  const roleHeader = sheetName.replace(/s$/,'') + ' ';
+  const headers = companyKey
+    ? ['Country','City','Company', roleHeader, 'Email','Telephone']
+    : ['Country','City', sheetName, 'Email','Telephone'];
+  headers.forEach((h,i)=>{
+    const cell = ws.getCell(1,i+1);
+    cell.value = h;
+    cell.font = XL_HEADER_FONT;
+    cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    cell.border = { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} };
+  });
+
+  const seen = new Map();
+  games.forEach(g=>{
+    const key = g.city + '|' + g[roleKey];
+    if(seen.has(key)) return;
+    const country = g.homeName || g.home;
+    const rowVals = [country, g.city];
+    if(companyKey) rowVals.push(g[companyKey] || '');
+    rowVals.push(g[roleKey] || '', '', '');
+    seen.set(key, rowVals);
+  });
+
+  let r = 2;
+  seen.forEach(rowVals=>{
+    rowVals.forEach((v,i)=>{
+      const cell = ws.getCell(r,i+1);
+      cell.value = v;
+      cell.font = XL_FONT_WIDE;
+      cell.alignment = { horizontal:'left', vertical:'middle' };
+      cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+    });
+    r++;
+  });
+
+  const widths = companyKey ? [22.43,22.14,33.71,20.14,24,18] : [22.43,22.14,31.43,20.14,24,18];
+  widths.slice(0, headers.length).forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+  return ws;
+}
+
+function buildTechnicalPowerSheet(wb, games){
+  const ws = wb.addWorksheet('Technical power');
+  ['Country','Venue','Technical Power'].forEach((h,i)=>{
+    const cell = ws.getCell(1,i+1);
+    cell.value = h;
+    cell.font = XL_HEADER_FONT;
+    cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    cell.border = { top:{style:'medium'}, bottom:{style:'medium'}, left:{style:'thin'}, right:{style:'thin'} };
+  });
+  ws.getRow(1).height = 30;
+
+  const seen = new Map();
+  games.forEach(g=>{
+    if(seen.has(g.venue)) return;
+    seen.set(g.venue, [g.homeName || g.home, g.venue, g.technicalPower || '']);
+  });
+
+  let r = 2;
+  seen.forEach(rowVals=>{
+    rowVals.forEach((v,i)=>{
+      const cell = ws.getCell(r,i+1);
+      cell.value = v;
+      cell.font = XL_FONT_WIDE;
+      cell.alignment = { horizontal:'left', vertical:'middle' };
+      cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} };
+    });
+    r++;
+  });
+
+  const lastRow = Math.max(r - 1, 2);
+  xlAddCF(ws, `C2:C${lastRow}`, 'yes', XL_GREEN, null, 1);
+  xlAddCF(ws, `C2:C${lastRow}`, 'no', XL_RED, XL_WHITE, 2);
+  ws.getColumn(1).width = 22;
+  ws.getColumn(2).width = 37.71;
+  ws.getColumn(3).width = 15;
+  return ws;
+}
+
+async function buildWindowWorkbookBlob(){
+  const games = state.games;
+  const label = state.windowId.toUpperCase();
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'WCQ Graphics Control';
+  wb.created = new Date();
+  wb.calcProperties.fullCalcOnLoad = true;
+
+  buildGamesSheet(wb, `Games ${label}`, games);
+  buildRosterSheet(wb, 'GFX Operators', games, 'gfxOperator', 'gfxCompany');
+  buildRosterSheet(wb, 'BOVM', games, 'bovm', null);
+  buildTechnicalPowerSheet(wb, games);
+
+  const buf = await wb.xlsx.writeBuffer();
+  return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+async function exportToExcel(){
+  const btn = document.getElementById('exportBtn');
+  if(btn.disabled) return;
+
+  if(!state.games.length){
+    showToast('No games to export yet.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.querySelector('.export-icon').classList.add('hidden');
+  btn.querySelector('.export-spinner').classList.remove('hidden');
+
+  try{
+    const blob = await buildWindowWorkbookBlob();
+    const filename = `WCQ-${state.windowId.toUpperCase()}-Timing-and-follow-up.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=> URL.revokeObjectURL(url), 4000);
+    showToast(`Downloaded ${filename}`, 'ok');
+  }catch(err){
+    console.error('export failed', err);
+    showToast('Export failed — check the console.', 'error');
+  }finally{
+    btn.disabled = false;
+    btn.querySelector('.export-icon').classList.remove('hidden');
+    btn.querySelector('.export-spinner').classList.add('hidden');
+  }
+}
+
+init();

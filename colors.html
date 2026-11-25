@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html class="dark h-full bg-[#0b0f19] text-slate-100" lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>WCQ Uniform Colours</title>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: { fontFamily: { mono: ["'IBM Plex Mono'", 'ui-monospace', 'monospace'] } } }
+  }
+</script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js?v=202611251216"></script>
+<style>
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:#0b0f19}
+  ::-webkit-scrollbar-thumb{background:#273549;border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:#3b4d66}
+
+  @font-face{
+    font-family:'Stepitup Condensed';
+    src:url('fonts/STEPITUP-BoldCondensed.woff2') format('woff2'),
+        url('fonts/STEPITUP-BoldCondensed.woff') format('woff');
+    font-weight:700; font-style:normal; font-display:swap;
+  }
+  .score-stripe{
+    display:flex; align-items:stretch; height:36px; border-radius:5px; overflow:hidden;
+    background:#141414; box-shadow:0 1px 3px rgba(0,0,0,.45); width:100%; max-width:280px;
+    font-family:'Stepitup Condensed', Arial, sans-serif;
+  }
+  .stripe-team{
+    flex:1 1 0; min-width:0; display:flex; align-items:center; gap:5px;
+    padding:0 10px; cursor:pointer;
+  }
+  .stripe-home{ justify-content:flex-start; clip-path:polygon(0 0,90% 0,100% 100%,0 100%); }
+  .stripe-away{ justify-content:flex-end; clip-path:polygon(10% 0,100% 0,100% 100%,0 100%); }
+  .stripe-gap{ width:12px; background:#141414; flex-shrink:0; }
+  .stripe-code{ font-size:14px; letter-spacing:.02em; text-transform:uppercase; line-height:1; white-space:nowrap; }
+</style>
+</head>
+<body class="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col font-sans antialiased">
+
+<header class="border-b border-[#1f2937] bg-[#111827]/90 backdrop-blur sticky top-0 z-30 px-4 py-2.5">
+  <div class="max-w-[1180px] mx-auto flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-base shadow-inner shadow-blue-400">🏀</div>
+      <div>
+        <span class="text-xs font-bold uppercase tracking-wider text-blue-400">FIBA WCQ · Window 5</span>
+        <h1 class="text-sm font-extrabold tracking-tight text-white leading-none">Team Uniform Colours</h1>
+      </div>
+    </div>
+    <div class="flex-1 max-w-xs min-w-[180px]">
+      <div class="relative">
+        <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+        </div>
+        <input id="searchInput" type="text" placeholder="Search a team or matchup…"
+          class="w-full pl-8 pr-3 py-1.5 text-xs bg-[#0b0f19] border border-[#2d3a54] focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-slate-200 placeholder-slate-500">
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="flex-1 max-w-[1180px] w-full mx-auto p-4 flex flex-col gap-8">
+
+  <section class="flex flex-col gap-3" id="teamsSection">
+    <div>
+      <h2 class="text-base font-bold text-white">Team Colours &amp; Fixtures</h2>
+      <p class="text-xs text-slate-400">Each team's jersey colours alongside its Window 5 fixtures, by confederation.</p>
+    </div>
+
+    <div class="flex items-center gap-1.5 border-b border-[#1f2937]" id="continentTabs"></div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6" id="splitView">
+      <div class="flex flex-col gap-3">
+        <h3 class="text-sm font-bold text-white" id="colorsColTitle">Team Colours</h3>
+        <div id="teamsByContinent" class="flex flex-col gap-2.5"></div>
+      </div>
+      <!-- On phones the fixtures come first; on wide screens they stay on the right. -->
+      <div class="flex flex-col gap-3 order-first lg:order-none">
+        <h3 class="text-sm font-bold text-white" id="fixturesColTitle">Fixtures</h3>
+        <div class="border border-[#1f2937] rounded-lg overflow-hidden bg-[#111827]">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="bg-[#0f172a] text-[11px] uppercase tracking-wider font-semibold text-slate-400 border-b border-[#1f2937]">
+                <tr><th class="py-2 px-3 w-24">Date</th><th class="py-2 px-3">Matchup</th></tr>
+              </thead>
+              <tbody id="pairingBody" class="divide-y divide-[#1b2434]"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap gap-4 text-xs text-slate-400 items-center mt-1">
+      <span>Confederation:</span>
+      <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#4ade80"></span>Africa</span>
+      <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#f87171"></span>Americas</span>
+      <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#facc15"></span>Asia</span>
+      <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background:#60a5fa"></span>Europe</span>
+    </div>
+  </section>
+
+  <section class="flex flex-col gap-3">
+    <div>
+      <h2 class="text-base font-bold text-white">Available Colours</h2>
+      <p class="text-xs text-slate-400">The full swatch library used across all graphics packages. Click any swatch to copy its hex code.</p>
+    </div>
+    <div class="border border-[#1f2937] rounded-lg bg-[#111827] p-4">
+      <div id="paletteGrid" class="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2.5"></div>
+    </div>
+  </section>
+
+  <footer class="text-[11px] text-slate-500 text-center pt-2 pb-4">FIBA World Cup Qualifiers · Window 5 · 26–30 November 2026 · Colours provided by the production team — please confirm before final delivery.</footer>
+</main>
+
+<script src="colors.js?v=202611251216"></script>
+</body>
+</html>
